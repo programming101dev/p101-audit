@@ -29,6 +29,7 @@ from typing import Any, Iterable
 
 SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".m", ".mm"}
 HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx"}
+CLANG_AST_TIMEOUT_SECONDS = 30
 SKIP_DIRS = {
     ".git",
     ".hg",
@@ -82,9 +83,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("-a", "--allow", action="append", default=[], metavar="NAME", help="allow an external callee name; may be repeated")
     parser.add_argument("--clang", default=os.environ.get("P101_WRAPPER_AUDIT_CLANG", "clang"), help="clang executable")
     parser.add_argument("--compile-db", type=Path, help="compile_commands.json path")
+    parser.add_argument("--cflag", action="append", default=[], help="extra compiler flag for files not present in compile_commands.json; may be repeated")
     parser.add_argument("--header-root", action="append", type=Path, default=[], help="root containing p101 headers; may be repeated")
     parser.add_argument("--show-inventory", action="store_true", help="print generated wrapper inventory and exit")
     parser.add_argument("--show-inventory-json", action="store_true", help="print generated wrapper inventory as JSON and exit")
+    parser.add_argument("--emit-module-facts", action="store_true", help="emit Clang-derived module facts as TSV and exit")
     return parser.parse_args(argv)
 
 
@@ -154,13 +157,31 @@ def discover_sources(paths: list[Path], compile_db: dict[Path, dict[str, Any]]) 
         if path.is_file() and path.suffix in SOURCE_SUFFIXES:
             sources.setdefault(path.resolve(), TranslationUnit(source=path.resolve(), command=None, directory=path.parent.resolve()))
         elif path.is_dir():
-            for child in path.rglob("*"):
-                if child.is_dir() and is_skipped_dir(child):
-                    continue
-                if child.is_file() and child.suffix in SOURCE_SUFFIXES:
-                    sources.setdefault(child.resolve(), TranslationUnit(source=child.resolve(), command=None, directory=child.parent.resolve()))
+            for dirpath, dirnames, filenames in os.walk(path):
+                dirnames[:] = [name for name in dirnames if not is_skipped_dir(Path(name))]
+                directory = Path(dirpath)
+                for filename in filenames:
+                    child = directory / filename
+                    if child.suffix in SOURCE_SUFFIXES:
+                        sources.setdefault(child.resolve(), TranslationUnit(source=child.resolve(), command=None, directory=child.parent.resolve()))
 
     return sorted(sources.values(), key=lambda item: str(item.source))
+
+
+def discover_headers(paths: list[Path]) -> list[Path]:
+    headers: set[Path] = set()
+    for path in paths:
+        if path.is_file() and path.suffix in HEADER_SUFFIXES:
+            headers.add(path.resolve())
+        elif path.is_dir():
+            for dirpath, dirnames, filenames in os.walk(path):
+                dirnames[:] = [name for name in dirnames if not is_skipped_dir(Path(name))]
+                directory = Path(dirpath)
+                for filename in filenames:
+                    child = directory / filename
+                    if child.suffix in HEADER_SUFFIXES:
+                        headers.add(child.resolve())
+    return sorted(headers, key=lambda item: str(item))
 
 
 def entry_to_command(entry: dict[str, Any]) -> list[str] | None:
@@ -199,15 +220,15 @@ def add_atomic_aliases(inventory: dict[str, str]) -> None:
             inventory.setdefault(f"atomic_{base}", wrapper)
 
 
-def clang_ast(command: str, tu: TranslationUnit) -> dict[str, Any]:
+def clang_ast(command: str, tu: TranslationUnit, extra_cflags: list[str]) -> dict[str, Any]:
     if tu.command:
         ast_command = ast_command_from_compile_command(command, tu)
     else:
         language = language_for(tu.source)
         standard = "c++17" if "c++" in language else "c17"
-        ast_command = [command, "-x", language, f"-std={standard}", "-fsyntax-only", "-Xclang", "-ast-dump=json", str(tu.source)]
+        ast_command = [command, "-x", language, f"-std={standard}", *extra_cflags, "-fsyntax-only", "-Xclang", "-ast-dump=json", str(tu.source)]
 
-    proc = subprocess.run(ast_command, cwd=str(tu.directory or tu.source.parent), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    proc = subprocess.run(ast_command, cwd=str(tu.directory or tu.source.parent), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=CLANG_AST_TIMEOUT_SECONDS)
     if proc.returncode != 0:
         raise RuntimeError(f"clang failed for {tu.source}:\n{proc.stderr}")
     return json.loads(proc.stdout)
@@ -258,7 +279,7 @@ def iter_nodes(node: dict[str, Any]) -> Iterable[dict[str, Any]]:
 
 
 def location_file(loc: dict[str, Any]) -> Path | None:
-    file_text = loc.get("file") or loc.get("includedFrom", {}).get("file")
+    file_text = loc.get("file")
     if not file_text:
         return None
     return Path(file_text).resolve()
@@ -271,7 +292,7 @@ def line_col_from_offset(source_text: str, offset: int) -> tuple[int, int]:
     return line, column
 
 
-def spelling_location(node: dict[str, Any], default_file: Path | None = None, source_text: str | None = None) -> tuple[Path | None, int, int]:
+def spelling_location(node: dict[str, Any], default_file: Path | None = None, source_text: str | None = None, allow_default_file: bool = True) -> tuple[Path | None, int, int]:
     loc = node.get("loc", {}) or {}
     if "spellingLoc" in loc:
         loc = loc["spellingLoc"]
@@ -283,17 +304,17 @@ def spelling_location(node: dict[str, Any], default_file: Path | None = None, so
         file_path = location_file(range_begin)
         if loc.get("line") is None and range_begin.get("line") is not None:
             loc = range_begin
-    if file_path is None and (loc.get("line") is not None or ((node.get("range", {}) or {}).get("begin", {}) or {}).get("line") is not None):
-        file_path = default_file
     line = int(loc.get("line", 0) or 0)
     column = int(loc.get("col", 0) or 0)
-    if line == 0 and source_text is not None:
+    if source_text is not None:
         offset = loc.get("offset")
         if offset is None:
             offset = range_begin.get("offset")
         if isinstance(offset, int):
-            line, column = line_col_from_offset(source_text, offset)
-            file_path = file_path or default_file
+            if line == 0:
+                line, column = line_col_from_offset(source_text, offset)
+            if allow_default_file and "includedFrom" not in loc and "includedFrom" not in range_begin:
+                file_path = file_path or default_file
     return file_path, line, column
 
 
@@ -412,6 +433,153 @@ def print_json(findings: list[Finding]) -> None:
     print(json.dumps(data, indent=2, sort_keys=True))
 
 
+def module_name_for(path: Path) -> str:
+    return path.stem
+
+
+def bool_text(value: bool) -> str:
+    return "1" if value else "0"
+
+
+def tsv_field(value: object) -> str:
+    text = str(value)
+    return text.replace("\\", "\\\\").replace("\t", "\\t").replace("\n", "\\n").replace("\r", "\\r")
+
+
+def print_fact(kind: str, path: Path, line: int, *fields: object) -> None:
+    is_header = path.suffix in HEADER_SUFFIXES
+    row = [
+        "P101FACT",
+        "1",
+        kind,
+        str(path),
+        module_name_for(path),
+        bool_text(is_header),
+        str(line),
+        *[tsv_field(field) for field in fields],
+    ]
+    print("\t".join(row))
+
+
+def source_line_facts(path: Path) -> Iterable[tuple[str, int, tuple[object, ...]]]:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    for line_number, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        include = re.match(r'#\s*include\s*([<"])([^>"]+)[>"]', stripped)
+        if include:
+            print_target = include.group(2)
+            is_local = include.group(1) == '"'
+            yield ("INCLUDE", line_number, (print_target, bool_text(is_local)))
+
+        macro = re.match(r"#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)", stripped)
+        if macro:
+            name = macro.group(1)
+            if not (len(name) > 2 and name.endswith("_H")):
+                yield ("MACRO", line_number, (name,))
+
+        if path.suffix not in HEADER_SUFFIXES:
+            if "struct p101_error" in stripped or "p101_error_" in stripped or "P101_ERROR_" in stripped:
+                yield ("NOTE", line_number, ("ERROR_USE",))
+            if "P101_ERROR_" in stripped or "p101_error_has_" in stripped or "p101_error_is_" in stripped or "p101_error_reset" in stripped:
+                yield ("NOTE", line_number, ("ERROR_CHECK",))
+
+
+def node_has_body(node: dict[str, Any]) -> bool:
+    return any(isinstance(child, dict) and child.get("kind") == "CompoundStmt" for child in node.get("inner", []) or [])
+
+
+def node_is_static_function(node: dict[str, Any]) -> bool:
+    return node.get("storageClass") == "static"
+
+
+def node_type_text(node: dict[str, Any]) -> str:
+    type_info = node.get("type")
+    if isinstance(type_info, dict):
+        return str(type_info.get("qualType", ""))
+    return ""
+
+
+def collect_module_facts(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]], roots: list[Path]) -> list[tuple[str, Path, int, tuple[object, ...]]]:
+    facts: list[tuple[str, Path, int, tuple[object, ...]]] = []
+    seen: set[tuple[str, str, int, tuple[object, ...]]] = set()
+
+    for unit, ast in units_and_asts:
+        source_text = unit.source.read_text(encoding="utf-8", errors="ignore")
+        for path_fact in source_line_facts(unit.source):
+            kind, line, fields = path_fact
+            key = (kind, str(unit.source), line, fields)
+            if key not in seen:
+                seen.add(key)
+                facts.append((kind, unit.source, line, fields))
+
+        for node in iter_nodes(ast):
+            kind = node.get("kind")
+            if kind not in {"FunctionDecl", "CallExpr", "TypedefDecl", "RecordDecl", "ParmVarDecl", "VarDecl"}:
+                continue
+
+            unit_is_header = unit.source.suffix in HEADER_SUFFIXES
+            allow_default_file = kind in {"CallExpr", "ParmVarDecl", "VarDecl"} or (unit_is_header and kind in {"FunctionDecl", "TypedefDecl", "RecordDecl"}) or (kind == "FunctionDecl" and node_has_body(node))
+            file_path, line, _ = spelling_location(node, unit.source, source_text, allow_default_file=allow_default_file)
+            if file_path is None or not is_under(file_path, roots):
+                continue
+            line = line or 1
+            is_header = file_path.suffix in HEADER_SUFFIXES
+
+            if kind == "FunctionDecl":
+                name = node.get("name")
+                if not name:
+                    continue
+                is_definition = node_has_body(node)
+                if is_definition or is_header:
+                    fields = (str(name), bool_text(node_is_static_function(node)), bool_text(is_header and not is_definition))
+                    key = ("FUNCTION", str(file_path), line, fields)
+                    if key not in seen:
+                        seen.add(key)
+                        facts.append(("FUNCTION", file_path, line, fields))
+                continue
+
+            if kind == "CallExpr":
+                name = call_name(node)
+                if name:
+                    fields = (name,)
+                    key = ("CALL", str(file_path), line, fields)
+                    if key not in seen:
+                        seen.add(key)
+                        facts.append(("CALL", file_path, line, fields))
+                continue
+
+            if is_header and kind in {"TypedefDecl", "RecordDecl"}:
+                name = node.get("name")
+                if name and not node.get("isImplicit", False):
+                    fields = (str(name),)
+                    key = ("TYPE", str(file_path), line, fields)
+                    if key not in seen:
+                        seen.add(key)
+                        facts.append(("TYPE", file_path, line, fields))
+                continue
+
+            if not is_header and kind in {"ParmVarDecl", "VarDecl"} and "p101_error" in node_type_text(node):
+                fields = ("ERROR_USE",)
+                key = ("NOTE", str(file_path), line, fields)
+                if key not in seen:
+                    seen.add(key)
+                    facts.append(("NOTE", file_path, line, fields))
+
+    return sorted(facts, key=lambda item: (str(item[1]), item[2], item[0], item[3]))
+
+
+def print_module_facts(units: list[TranslationUnit], facts: list[tuple[str, Path, int, tuple[object, ...]]]) -> None:
+    emitted_files: set[Path] = set()
+    for unit in sorted(units, key=lambda item: str(item.source)):
+        emitted_files.add(unit.source)
+        print_fact("FILE", unit.source, 0)
+    for kind, path, line, fields in facts:
+        if path not in emitted_files and path.suffix in HEADER_SUFFIXES:
+            emitted_files.add(path)
+            print_fact("FILE", path, 0)
+        print_fact(kind, path, line, *fields)
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     paths = [Path(path).resolve() for path in args.paths]
@@ -425,30 +593,47 @@ def main(argv: list[str]) -> int:
         print_inventory_json(inventory)
         return 0
 
+    if not args.emit_module_facts and not inventory:
+        print("p101-wrapper-audit: wrapper inventory is empty", file=sys.stderr)
+        print("p101-wrapper-audit: pass --header-root or install/build the p101 wrapper headers first.", file=sys.stderr)
+        return 2
+
     if args.compile_db is not None and not args.compile_db.is_file():
         print(f"p101-wrapper-audit: compile database does not exist: {args.compile_db}", file=sys.stderr)
         return 2
 
-    compile_db = load_compile_db(args.compile_db or find_compile_db(paths))
+    try:
+        compile_db = load_compile_db(args.compile_db or find_compile_db(paths))
+    except json.JSONDecodeError as exc:
+        print(f"p101-wrapper-audit: invalid compile database JSON: {exc}", file=sys.stderr)
+        return 2
     units = discover_sources(paths, compile_db)
+    if args.emit_module_facts:
+        existing = {unit.source for unit in units}
+        units.extend(TranslationUnit(source=header, command=None, directory=header.parent) for header in discover_headers(paths) if header not in existing)
+        units = sorted(units, key=lambda item: str(item.source))
     if not units:
         print("p101-wrapper-audit: no source translation units found", file=sys.stderr)
         return 2
 
     if args.compile_db is not None:
-        missing_commands = [unit.source for unit in units if unit.command is None]
+        missing_commands = [unit.source for unit in units if unit.command is None and unit.source.suffix in SOURCE_SUFFIXES]
         if missing_commands:
             print(f"p101-wrapper-audit: compile database has no command for {missing_commands[0]}", file=sys.stderr)
             print("p101-wrapper-audit: rebuild the target or pass the compile_commands.json that matches these sources.", file=sys.stderr)
             return 2
 
     try:
-        units_and_asts = [(unit, clang_ast(args.clang, unit)) for unit in units]
-    except (OSError, RuntimeError, json.JSONDecodeError) as exc:
+        units_and_asts = [(unit, clang_ast(args.clang, unit, args.cflag)) for unit in units]
+    except (OSError, RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
         print(f"p101-wrapper-audit: {exc}", file=sys.stderr)
         if args.compile_db is not None:
             print("p101-wrapper-audit: the compile database may be stale or from a different build tree.", file=sys.stderr)
         return 2
+
+    if args.emit_module_facts:
+        print_module_facts(units, collect_module_facts(units_and_asts, paths))
+        return 0
 
     local_functions = collect_local_functions(units_and_asts, paths)
     findings = collect_findings(units_and_asts, paths, local_functions, inventory, set(args.allow))

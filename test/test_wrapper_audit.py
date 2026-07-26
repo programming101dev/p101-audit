@@ -105,6 +105,49 @@ def test_compile_db_without_source_command_is_clear() -> None:
         assert "compile database has no command" in result.stderr
 
 
+def test_module_fact_output_uses_clang_ast_for_c_facts() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        header = root / "thing.h"
+        source = root / "thing.c"
+        header.write_text(
+            """
+            #ifndef THING_H
+            #define THING_H
+            #define THING_LIMIT 8
+            typedef int (*thing_callback)(int);
+            struct thing_state;
+            int thing_run(int value);
+            #endif
+            """,
+            encoding="utf-8",
+        )
+        source.write_text(
+            """
+            #include "thing.h"
+            #include <stdio.h>
+            static int helper(int value) { return value + 1; }
+            int thing_run(int value) {
+                return printf("%d\\n", helper(value));
+            }
+            """,
+            encoding="utf-8",
+        )
+        result = run_tool("--emit-module-facts", f"--cflag=-I{root}", str(root))
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "\tFUNCTION\t" in result.stdout
+        assert "\tthing_run\t0\t0" in result.stdout
+        assert "\thelper\t1\t0" in result.stdout
+        assert "\tCALL\t" in result.stdout
+        assert "\tprintf" in result.stdout
+        assert "\thelper" in result.stdout
+        assert "\tTYPE\t" in result.stdout
+        assert "\tthing_callback" in result.stdout
+        assert "\tthing_state" in result.stdout
+        assert "\tMACRO\t" in result.stdout
+        assert "\tTHING_LIMIT" in result.stdout
+
+
 def main() -> int:
     tests = [
         test_missed_wrapper_and_local_function,
@@ -113,6 +156,7 @@ def main() -> int:
         test_inventory_json_output,
         test_missing_compile_db_is_clear,
         test_compile_db_without_source_command_is_clear,
+        test_module_fact_output_uses_clang_ast_for_c_facts,
     ]
     for test in tests:
         test()

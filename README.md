@@ -27,18 +27,28 @@ Options:
 - `-e`, `--strict-external` makes unmapped external calls fail too.
 - `-a NAME`, `--allow NAME` allows an external callee name.
 - `--compile-db compile_commands.json` uses a specific compile database.
+- `--cflag FLAG` adds a compiler flag for files not present in a compile
+  database; may be repeated.
 - `--clang clang-22` uses a specific Clang.
 - `--header-root DIR` adds a p101 header inventory root.
 - `--show-inventory` prints the generated `original -> p101_wrapper` inventory.
 - `--show-inventory-json` prints the same inventory as machine-readable JSON.
+- `--emit-module-facts` emits the Clang-derived TSV fact stream consumed by
+  `p101-module-map`; see [docs/module-facts.md](docs/module-facts.md).
 
 Examples:
 
 ```sh
 ./p101-wrapper-audit ../simple-port-forwarder/src
 ./p101-wrapper-audit -j --compile-db ../simple-port-forwarder/build-clang/compile_commands.json ../simple-port-forwarder
+./p101-wrapper-audit --cflag=-Iinclude src
+./p101-wrapper-audit --emit-module-facts --cflag=-Iinclude src include
 ./p101-wrapper-audit -e -a TEST_ASSERT_EQUAL_INT test src
 ```
+
+The wrapper inventory is part of the trust boundary. A normal audit fails as a
+setup error if no p101 wrappers can be inventoried, because an empty inventory
+would otherwise make direct calls look harmless.
 
 ## Exit status
 
