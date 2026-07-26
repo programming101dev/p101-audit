@@ -30,6 +30,7 @@ Options:
 - `--clang clang-22` uses a specific Clang.
 - `--header-root DIR` adds a p101 header inventory root.
 - `--show-inventory` prints the generated `original -> p101_wrapper` inventory.
+- `--show-inventory-json` prints the same inventory as machine-readable JSON.
 
 Examples:
 

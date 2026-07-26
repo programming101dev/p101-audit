@@ -14,6 +14,7 @@ Quick reference for `p101-wrapper-audit`. This tool is Python/Clang based, so
 | `./p101-wrapper-audit -e src include` | Treat unmapped external calls as findings too |
 | `./p101-wrapper-audit -a TEST_ASSERT_EQUAL_INT test src` | Allow a specific external callee |
 | `./p101-wrapper-audit --show-inventory` | Print the generated `original -> p101_wrapper` inventory |
+| `./p101-wrapper-audit --show-inventory-json` | Print the generated wrapper inventory as JSON |
 
 Exit status: `0` means no missed wrappers, `1` means missed wrappers or strict
 external findings, and `2` means setup/parser trouble.

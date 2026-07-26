@@ -84,6 +84,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--compile-db", type=Path, help="compile_commands.json path")
     parser.add_argument("--header-root", action="append", type=Path, default=[], help="root containing p101 headers; may be repeated")
     parser.add_argument("--show-inventory", action="store_true", help="print generated wrapper inventory and exit")
+    parser.add_argument("--show-inventory-json", action="store_true", help="print generated wrapper inventory as JSON and exit")
     return parser.parse_args(argv)
 
 
@@ -378,6 +379,14 @@ def print_inventory(inventory: dict[str, str]) -> None:
         print(f"{original}\t{wrapper}")
 
 
+def print_inventory_json(inventory: dict[str, str]) -> None:
+    data = {
+        "schema": "p101-wrapper-inventory-v1",
+        "wrappers": [{"original": original, "wrapper": wrapper} for original, wrapper in sorted(inventory.items())],
+    }
+    print(json.dumps(data, indent=2, sort_keys=True))
+
+
 def print_text(findings: list[Finding]) -> None:
     missed = sum(1 for finding in findings if finding.kind == "missed-wrapper")
     external = sum(1 for finding in findings if finding.kind == "external-call")
@@ -410,6 +419,10 @@ def main(argv: list[str]) -> int:
 
     if args.show_inventory:
         print_inventory(inventory)
+        return 0
+
+    if args.show_inventory_json:
+        print_inventory_json(inventory)
         return 0
 
     if args.compile_db is not None and not args.compile_db.is_file():

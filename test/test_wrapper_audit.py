@@ -77,6 +77,14 @@ def test_json_output() -> None:
         assert any("hint" in item for item in data["findings"])
 
 
+def test_inventory_json_output() -> None:
+    result = run_tool("--show-inventory-json")
+    assert result.returncode == 0, result.stderr + result.stdout
+    data = json.loads(result.stdout)
+    assert data["schema"] == "p101-wrapper-inventory-v1"
+    assert any(item["original"] == "malloc" and item["wrapper"] == "p101_malloc" for item in data["wrappers"])
+
+
 def test_missing_compile_db_is_clear() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "main.c"
@@ -102,6 +110,7 @@ def main() -> int:
         test_missed_wrapper_and_local_function,
         test_external_inventory_does_not_fail_by_default,
         test_json_output,
+        test_inventory_json_output,
         test_missing_compile_db_is_clear,
         test_compile_db_without_source_command_is_clear,
     ]
