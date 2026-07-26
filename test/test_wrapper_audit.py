@@ -35,6 +35,7 @@ def test_missed_wrapper_and_local_function() -> None:
         assert result.returncode == 1, result.stderr + result.stdout
         assert "missed-wrapper: malloc" in result.stdout
         assert "missed-wrapper: free" in result.stdout
+        assert "hint: use p101_malloc" in result.stdout
         assert "mine" not in result.stdout
 
 
@@ -73,6 +74,7 @@ def test_json_output() -> None:
         data = json.loads(result.stdout)
         assert data["missed_wrappers"] >= 1
         assert any(item["name"] == "printf" for item in data["findings"])
+        assert any("hint" in item for item in data["findings"])
 
 
 def test_missing_compile_db_is_clear() -> None:

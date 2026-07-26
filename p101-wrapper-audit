@@ -69,6 +69,7 @@ class Finding:
     kind: str
     replacement: str
     category: str
+    hint: str
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
@@ -356,13 +357,20 @@ def collect_findings(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]
             replacement = inventory.get(name, "")
             kind = "missed-wrapper" if replacement else "external-call"
             category = "wrapped" if replacement else "external"
+            hint = replacement_hint(name, replacement)
             key = (str(file_path), line, column, name)
             if key in seen:
                 continue
             seen.add(key)
-            findings.append(Finding(path=str(file_path), line=line, column=column, name=name, kind=kind, replacement=replacement, category=category))
+            findings.append(Finding(path=str(file_path), line=line, column=column, name=name, kind=kind, replacement=replacement, category=category, hint=hint))
 
     return sorted(findings, key=lambda item: (item.path, item.line, item.column, item.name))
+
+
+def replacement_hint(name: str, replacement: str) -> str:
+    if replacement:
+        return f"use {replacement}(env, err, ...) instead of raw {name}(...) when the surrounding code is p101-aware"
+    return "external/non-p101 call; allow it explicitly, wrap it, or keep it at a documented boundary"
 
 
 def print_inventory(inventory: dict[str, str]) -> None:
@@ -380,8 +388,10 @@ def print_text(findings: list[Finding]) -> None:
         location = f"{finding.path}:{finding.line}:{finding.column}"
         if finding.kind == "missed-wrapper":
             print(f"{location}: missed-wrapper: {finding.name} -> {finding.replacement}")
+            print(f"  hint: {finding.hint}")
         else:
             print(f"{location}: external-call: {finding.name}")
+            print(f"  hint: {finding.hint}")
 
 
 def print_json(findings: list[Finding]) -> None:

@@ -11,8 +11,9 @@ It uses Clang's real C/C++ parser, not a token scanner:
 4. report calls to functions that are neither local nor `p101_*`.
 
 Known wrapped functions are reported as `missed-wrapper` findings and make the
-tool exit `1`. Other external calls are reported as inventory and only fail with
-`--strict-external`.
+tool exit `1`. Each finding includes a replacement hint such as
+`open -> p101_open`. Other external calls are reported as inventory and only
+fail with `--strict-external`.
 
 ## Usage
 
