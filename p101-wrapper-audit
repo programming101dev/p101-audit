@@ -402,16 +402,29 @@ def main(argv: list[str]) -> int:
         print_inventory(inventory)
         return 0
 
+    if args.compile_db is not None and not args.compile_db.is_file():
+        print(f"p101-wrapper-audit: compile database does not exist: {args.compile_db}", file=sys.stderr)
+        return 2
+
     compile_db = load_compile_db(args.compile_db or find_compile_db(paths))
     units = discover_sources(paths, compile_db)
     if not units:
         print("p101-wrapper-audit: no source translation units found", file=sys.stderr)
         return 2
 
+    if args.compile_db is not None:
+        missing_commands = [unit.source for unit in units if unit.command is None]
+        if missing_commands:
+            print(f"p101-wrapper-audit: compile database has no command for {missing_commands[0]}", file=sys.stderr)
+            print("p101-wrapper-audit: rebuild the target or pass the compile_commands.json that matches these sources.", file=sys.stderr)
+            return 2
+
     try:
         units_and_asts = [(unit, clang_ast(args.clang, unit)) for unit in units]
     except (OSError, RuntimeError, json.JSONDecodeError) as exc:
         print(f"p101-wrapper-audit: {exc}", file=sys.stderr)
+        if args.compile_db is not None:
+            print("p101-wrapper-audit: the compile database may be stale or from a different build tree.", file=sys.stderr)
         return 2
 
     local_functions = collect_local_functions(units_and_asts, paths)

@@ -75,11 +75,33 @@ def test_json_output() -> None:
         assert any(item["name"] == "printf" for item in data["findings"])
 
 
+def test_missing_compile_db_is_clear() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+        result = run_tool("--compile-db", str(Path(tmp) / "missing.json"), str(source))
+        assert result.returncode == 2
+        assert "compile database does not exist" in result.stderr
+
+
+def test_compile_db_without_source_command_is_clear() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        db = Path(tmp) / "compile_commands.json"
+        source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+        db.write_text("[]\n", encoding="utf-8")
+        result = run_tool("--compile-db", str(db), str(source))
+        assert result.returncode == 2
+        assert "compile database has no command" in result.stderr
+
+
 def main() -> int:
     tests = [
         test_missed_wrapper_and_local_function,
         test_external_inventory_does_not_fail_by_default,
         test_json_output,
+        test_missing_compile_db_is_clear,
+        test_compile_db_without_source_command_is_clear,
     ]
     for test in tests:
         test()
@@ -89,4 +111,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
