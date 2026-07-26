@@ -299,7 +299,9 @@ def spelling_location(node: dict[str, Any], default_file: Path | None = None, so
     file_path = location_file(loc)
     range_begin = ((node.get("range", {}) or {}).get("begin", {}) or {})
     if file_path is None:
-        if "spellingLoc" in range_begin:
+        if "expansionLoc" in range_begin:
+            range_begin = range_begin["expansionLoc"]
+        elif "spellingLoc" in range_begin:
             range_begin = range_begin["spellingLoc"]
         file_path = location_file(range_begin)
         if loc.get("line") is None and range_begin.get("line") is not None:
@@ -325,7 +327,7 @@ def collect_local_functions(units_and_asts: list[tuple[TranslationUnit, dict[str
         for node in iter_nodes(ast):
             if node.get("kind") != "FunctionDecl":
                 continue
-            if not any(isinstance(child, dict) and child.get("kind") == "CompoundStmt" for child in node.get("inner", []) or []):
+            if not node_has_body(node):
                 continue
             name = node.get("name")
             if not name:
@@ -485,7 +487,14 @@ def source_line_facts(path: Path) -> Iterable[tuple[str, int, tuple[object, ...]
 
 
 def node_has_body(node: dict[str, Any]) -> bool:
-    return any(isinstance(child, dict) and child.get("kind") == "CompoundStmt" for child in node.get("inner", []) or [])
+    for child in node.get("inner", []) or []:
+        if not isinstance(child, dict):
+            continue
+        if child.get("kind") == "CompoundStmt":
+            return True
+        if node_has_body(child):
+            return True
+    return False
 
 
 def node_is_static_function(node: dict[str, Any]) -> bool:

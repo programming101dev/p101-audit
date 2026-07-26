@@ -56,6 +56,26 @@ def test_external_inventory_does_not_fail_by_default() -> None:
         assert "external-call: third_party" in result.stdout
 
 
+def test_bool_returning_local_function_is_not_external() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        source.write_text(
+            """
+            #include <stdbool.h>
+            bool ready(void) {
+                return true;
+            }
+            int main(void) {
+                return ready() ? 0 : 1;
+            }
+            """,
+            encoding="utf-8",
+        )
+        result = run_tool(str(source))
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "external-call: ready" not in result.stdout
+
+
 def test_json_output() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "main.c"
@@ -148,15 +168,49 @@ def test_module_fact_output_uses_clang_ast_for_c_facts() -> None:
         assert "\tTHING_LIMIT" in result.stdout
 
 
+def test_module_facts_include_bool_returning_definitions() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        header = root / "ready.h"
+        source = root / "ready.c"
+        header.write_text(
+            """
+            #ifndef READY_H
+            #define READY_H
+            #include <stdbool.h>
+            bool ready(const char *path);
+            #endif
+            """,
+            encoding="utf-8",
+        )
+        source.write_text(
+            """
+            #include "ready.h"
+            bool ready(const char *path) {
+                return path != 0;
+            }
+            """,
+            encoding="utf-8",
+        )
+        result = run_tool("--emit-module-facts", f"--cflag=-I{root}", str(root))
+        assert result.returncode == 0, result.stderr + result.stdout
+        header_fact = f"FUNCTION\t{header.resolve()}\tready\t1\t5\tready\t0\t1"
+        source_fact = f"FUNCTION\t{source.resolve()}\tready\t0\t3\tready\t0\t0"
+        assert header_fact in result.stdout
+        assert source_fact in result.stdout
+
+
 def main() -> int:
     tests = [
         test_missed_wrapper_and_local_function,
         test_external_inventory_does_not_fail_by_default,
+        test_bool_returning_local_function_is_not_external,
         test_json_output,
         test_inventory_json_output,
         test_missing_compile_db_is_clear,
         test_compile_db_without_source_command_is_clear,
         test_module_fact_output_uses_clang_ast_for_c_facts,
+        test_module_facts_include_bool_returning_definitions,
     ]
     for test in tests:
         test()

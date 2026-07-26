@@ -33,8 +33,9 @@ Options:
 - `--header-root DIR` adds a p101 header inventory root.
 - `--show-inventory` prints the generated `original -> p101_wrapper` inventory.
 - `--show-inventory-json` prints the same inventory as machine-readable JSON.
-- `--emit-module-facts` emits the Clang-derived TSV fact stream consumed by
-  `p101-module-map`; see [docs/module-facts.md](docs/module-facts.md).
+- `--emit-module-facts` emits the Clang-derived TSV fact stream parsed by
+  `lib_c_facts` and consumed by `p101-module-map`; see
+  [docs/module-facts.md](docs/module-facts.md).
 
 Examples:
 

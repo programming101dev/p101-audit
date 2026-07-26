@@ -3,6 +3,9 @@
 `p101-wrapper-audit --emit-module-facts` emits a plain tab-separated stream for
 tools that need C project facts without owning a C parser.
 
+The canonical parser and record constants live in `lib_c_facts`. Keep this
+document in sync with `libraries/lib_c_facts/README.md` when the schema changes.
+
 Each record has this prefix:
 
 ```text
@@ -27,10 +30,11 @@ are escaped as `\\`, `\t`, `\n`, and `\r`.
 
 ## Ownership rule
 
-`p101-wrapper-audit` owns the C/C++ parsing pass. Consumers such as
-`p101-module-map` should consume this fact stream instead of scanning C syntax
-themselves. If another tool needs more C facts, extend this format at the
-producer and keep the consumer simple.
+`p101-wrapper-audit` owns the C/C++ parsing pass. `lib_c_facts` owns the stable
+record contract and parser. Consumers such as `p101-module-map` should consume
+this fact stream through `lib_c_facts` instead of scanning C syntax themselves.
+If another tool needs more C facts, extend this format at the producer and keep
+the consumer simple.
 
 The only line-oriented extraction in the producer is for preprocessor facts such
 as includes and macros, because the JSON AST dump does not expose those in a
