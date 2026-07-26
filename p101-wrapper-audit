@@ -1,0 +1,433 @@
+#!/usr/bin/env python3
+"""Audit calls that bypass the p101 wrapper boundary.
+
+This tool intentionally uses Clang as the C/C++ parser. It does not try to
+token-scan C. The workflow is:
+
+1. inventory p101 wrapper functions from p101 headers;
+2. parse target translation units with `clang -ast-dump=json`;
+3. collect local functions from files under the audited roots;
+4. report calls to non-local, non-p101 functions.
+
+Known wrapped calls are `missed-wrapper` findings and fail the run. Other
+external calls are reported as inventory unless --strict-external is used.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Iterable
+
+
+SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".m", ".mm"}
+HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx"}
+SKIP_DIRS = {
+    ".git",
+    ".hg",
+    ".svn",
+    "__pycache__",
+    "build",
+    "coverage",
+    "debug",
+    "dist",
+    "profile",
+}
+CONTROL_CALLEES = {
+    "__builtin_va_arg",
+    "__builtin_choose_expr",
+    "__builtin_offsetof",
+}
+DEFAULT_HEADER_ROOTS = [
+    Path(__file__).resolve().parents[2] / "libraries",
+    Path("/usr/local/include"),
+    Path("/opt/homebrew/include"),
+    Path("/opt/local/include"),
+]
+
+
+@dataclass(frozen=True)
+class TranslationUnit:
+    source: Path
+    command: list[str] | None
+    directory: Path | None
+
+
+@dataclass(frozen=True)
+class Finding:
+    path: str
+    line: int
+    column: int
+    name: str
+    kind: str
+    replacement: str
+    category: str
+
+
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Find calls that cross outside the local/p101 wrapper boundary.",
+    )
+    parser.add_argument("paths", nargs="*", default=["."], help="source files or directories to audit")
+    parser.add_argument("-j", "--json", action="store_true", help="emit JSON")
+    parser.add_argument("-e", "--strict-external", action="store_true", help="treat unmapped external calls as findings")
+    parser.add_argument("-a", "--allow", action="append", default=[], metavar="NAME", help="allow an external callee name; may be repeated")
+    parser.add_argument("--clang", default=os.environ.get("P101_WRAPPER_AUDIT_CLANG", "clang"), help="clang executable")
+    parser.add_argument("--compile-db", type=Path, help="compile_commands.json path")
+    parser.add_argument("--header-root", action="append", type=Path, default=[], help="root containing p101 headers; may be repeated")
+    parser.add_argument("--show-inventory", action="store_true", help="print generated wrapper inventory and exit")
+    return parser.parse_args(argv)
+
+
+def is_under(path: Path, roots: Iterable[Path]) -> bool:
+    resolved = path.resolve()
+    for root in roots:
+        try:
+            resolved.relative_to(root.resolve())
+            return True
+        except ValueError:
+            pass
+    return False
+
+
+def is_skipped_dir(path: Path) -> bool:
+    name = path.name
+    return name in SKIP_DIRS or name.startswith("build-") or name.startswith("coverage-") or name.startswith("debug-") or name.startswith("profile-")
+
+
+def find_compile_db(start_paths: list[Path]) -> Path | None:
+    candidates: list[Path] = []
+    for path in start_paths:
+        cursor = path if path.is_dir() else path.parent
+        for parent in [cursor, *cursor.parents]:
+            candidates.append(parent / "compile_commands.json")
+            for build_name in ("build-clang", "build", "build-clang-22"):
+                candidates.append(parent / build_name / "compile_commands.json")
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def load_compile_db(path: Path | None) -> dict[Path, dict[str, Any]]:
+    if path is None or not path.is_file():
+        return {}
+    data = json.loads(path.read_text(encoding="utf-8"))
+    entries: dict[Path, dict[str, Any]] = {}
+    for entry in data:
+        file_text = entry.get("file")
+        if not file_text:
+            continue
+        directory = Path(entry.get("directory", "."))
+        file_path = Path(file_text)
+        if not file_path.is_absolute():
+            file_path = directory / file_path
+        entries[file_path.resolve()] = entry
+    return entries
+
+
+def discover_sources(paths: list[Path], compile_db: dict[Path, dict[str, Any]]) -> list[TranslationUnit]:
+    roots = [path.resolve() for path in paths]
+    sources: dict[Path, TranslationUnit] = {}
+
+    for source, entry in compile_db.items():
+        if source.suffix in SOURCE_SUFFIXES and is_under(source, roots):
+            command = entry_to_command(entry)
+            directory = Path(entry.get("directory", ".")).resolve()
+            sources[source] = TranslationUnit(source=source, command=command, directory=directory)
+
+    for path in paths:
+        if path.is_file() and path.suffix in SOURCE_SUFFIXES:
+            sources.setdefault(path.resolve(), TranslationUnit(source=path.resolve(), command=None, directory=path.parent.resolve()))
+        elif path.is_dir():
+            for child in path.rglob("*"):
+                if child.is_dir() and is_skipped_dir(child):
+                    continue
+                if child.is_file() and child.suffix in SOURCE_SUFFIXES:
+                    sources.setdefault(child.resolve(), TranslationUnit(source=child.resolve(), command=None, directory=child.parent.resolve()))
+
+    return sorted(sources.values(), key=lambda item: str(item.source))
+
+
+def entry_to_command(entry: dict[str, Any]) -> list[str] | None:
+    if isinstance(entry.get("arguments"), list):
+        return [str(arg) for arg in entry["arguments"]]
+    if isinstance(entry.get("command"), str):
+        return shlex.split(entry["command"])
+    return None
+
+
+def wrapper_inventory(header_roots: list[Path]) -> dict[str, str]:
+    inventory: dict[str, str] = {}
+    pattern = re.compile(r"\bp101_([A-Za-z_][A-Za-z0-9_]*)\s*\(")
+    roots = [*header_roots, *DEFAULT_HEADER_ROOTS]
+
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for header in root.rglob("*.h"):
+            if "p101" not in str(header):
+                continue
+            text = header.read_text(encoding="utf-8", errors="ignore")
+            for match in pattern.finditer(text):
+                original = match.group(1)
+                wrapper = f"p101_{original}"
+                inventory.setdefault(original, wrapper)
+
+    add_atomic_aliases(inventory)
+    return inventory
+
+
+def add_atomic_aliases(inventory: dict[str, str]) -> None:
+    for base in ("load", "store", "fetch_add", "fetch_sub"):
+        wrapper = inventory.get(f"atomic_uint_{base}")
+        if wrapper:
+            inventory.setdefault(f"atomic_{base}", wrapper)
+
+
+def clang_ast(command: str, tu: TranslationUnit) -> dict[str, Any]:
+    if tu.command:
+        ast_command = ast_command_from_compile_command(command, tu)
+    else:
+        language = language_for(tu.source)
+        standard = "c++17" if "c++" in language else "c17"
+        ast_command = [command, "-x", language, f"-std={standard}", "-fsyntax-only", "-Xclang", "-ast-dump=json", str(tu.source)]
+
+    proc = subprocess.run(ast_command, cwd=str(tu.directory or tu.source.parent), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        raise RuntimeError(f"clang failed for {tu.source}:\n{proc.stderr}")
+    return json.loads(proc.stdout)
+
+
+def ast_command_from_compile_command(command: str, tu: TranslationUnit) -> list[str]:
+    original = list(tu.command or [])
+    if not original:
+        raise ValueError("missing compile command")
+
+    original[0] = command
+    result: list[str] = []
+    skip_next = False
+    for arg in original:
+        if skip_next:
+            skip_next = False
+            continue
+        if arg in {"-c", "-o", "-MF", "-MT", "-MQ"}:
+            skip_next = arg in {"-o", "-MF", "-MT", "-MQ"}
+            if arg == "-c":
+                continue
+            continue
+        if arg.startswith("-o") and arg != "-ObjC":
+            continue
+        result.append(arg)
+
+    result.extend(["-fsyntax-only", "-Xclang", "-ast-dump=json"])
+    return result
+
+
+def language_for(path: Path) -> str:
+    if path.suffix == ".c":
+        return "c"
+    if path.suffix in {".cc", ".cpp", ".cxx"}:
+        return "c++"
+    if path.suffix == ".m":
+        return "objective-c"
+    if path.suffix == ".mm":
+        return "objective-c++"
+    return "c"
+
+
+def iter_nodes(node: dict[str, Any]) -> Iterable[dict[str, Any]]:
+    yield node
+    for child in node.get("inner", []) or []:
+        if isinstance(child, dict):
+            yield from iter_nodes(child)
+
+
+def location_file(loc: dict[str, Any]) -> Path | None:
+    file_text = loc.get("file") or loc.get("includedFrom", {}).get("file")
+    if not file_text:
+        return None
+    return Path(file_text).resolve()
+
+
+def line_col_from_offset(source_text: str, offset: int) -> tuple[int, int]:
+    line = source_text.count("\n", 0, offset) + 1
+    previous_newline = source_text.rfind("\n", 0, offset)
+    column = offset + 1 if previous_newline < 0 else offset - previous_newline
+    return line, column
+
+
+def spelling_location(node: dict[str, Any], default_file: Path | None = None, source_text: str | None = None) -> tuple[Path | None, int, int]:
+    loc = node.get("loc", {}) or {}
+    if "spellingLoc" in loc:
+        loc = loc["spellingLoc"]
+    file_path = location_file(loc)
+    range_begin = ((node.get("range", {}) or {}).get("begin", {}) or {})
+    if file_path is None:
+        if "spellingLoc" in range_begin:
+            range_begin = range_begin["spellingLoc"]
+        file_path = location_file(range_begin)
+        if loc.get("line") is None and range_begin.get("line") is not None:
+            loc = range_begin
+    if file_path is None and (loc.get("line") is not None or ((node.get("range", {}) or {}).get("begin", {}) or {}).get("line") is not None):
+        file_path = default_file
+    line = int(loc.get("line", 0) or 0)
+    column = int(loc.get("col", 0) or 0)
+    if line == 0 and source_text is not None:
+        offset = loc.get("offset")
+        if offset is None:
+            offset = range_begin.get("offset")
+        if isinstance(offset, int):
+            line, column = line_col_from_offset(source_text, offset)
+            file_path = file_path or default_file
+    return file_path, line, column
+
+
+def collect_local_functions(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]], roots: list[Path]) -> set[str]:
+    names: set[str] = set()
+    for unit, ast in units_and_asts:
+        source_text = unit.source.read_text(encoding="utf-8", errors="ignore")
+        for node in iter_nodes(ast):
+            if node.get("kind") != "FunctionDecl":
+                continue
+            if not any(isinstance(child, dict) and child.get("kind") == "CompoundStmt" for child in node.get("inner", []) or []):
+                continue
+            name = node.get("name")
+            if not name:
+                continue
+            file_path, _, _ = spelling_location(node, unit.source, source_text)
+            if file_path is not None and is_under(file_path, roots):
+                names.add(str(name))
+    return names
+
+
+def call_name(node: dict[str, Any]) -> str | None:
+    referenced = node.get("referencedDecl")
+    if isinstance(referenced, dict) and referenced.get("name"):
+        return str(referenced["name"])
+    for child in node.get("inner", []) or []:
+        if isinstance(child, dict) and child.get("kind") in {"ImplicitCastExpr", "DeclRefExpr"}:
+            name = declref_name(child)
+            if name:
+                return name
+    return None
+
+
+def declref_name(node: dict[str, Any]) -> str | None:
+    referenced = node.get("referencedDecl")
+    if isinstance(referenced, dict) and referenced.get("name"):
+        return str(referenced["name"])
+    for child in node.get("inner", []) or []:
+        if isinstance(child, dict):
+            name = declref_name(child)
+            if name:
+                return name
+    return None
+
+
+def collect_findings(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]], roots: list[Path], locals_: set[str], inventory: dict[str, str], allow: set[str]) -> list[Finding]:
+    findings: list[Finding] = []
+    seen: set[tuple[str, int, int, str]] = set()
+
+    for unit, ast in units_and_asts:
+        source_text = unit.source.read_text(encoding="utf-8", errors="ignore")
+        for node in iter_nodes(ast):
+            if node.get("kind") != "CallExpr":
+                continue
+            name = call_name(node)
+            if not name or name in CONTROL_CALLEES or name.startswith("p101_") or name in locals_ or name in allow:
+                continue
+            file_path, line, column = spelling_location(node, unit.source, source_text)
+            if file_path is None or not is_under(file_path, roots):
+                continue
+
+            replacement = inventory.get(name, "")
+            kind = "missed-wrapper" if replacement else "external-call"
+            category = "wrapped" if replacement else "external"
+            key = (str(file_path), line, column, name)
+            if key in seen:
+                continue
+            seen.add(key)
+            findings.append(Finding(path=str(file_path), line=line, column=column, name=name, kind=kind, replacement=replacement, category=category))
+
+    return sorted(findings, key=lambda item: (item.path, item.line, item.column, item.name))
+
+
+def print_inventory(inventory: dict[str, str]) -> None:
+    for original, wrapper in sorted(inventory.items()):
+        print(f"{original}\t{wrapper}")
+
+
+def print_text(findings: list[Finding]) -> None:
+    missed = sum(1 for finding in findings if finding.kind == "missed-wrapper")
+    external = sum(1 for finding in findings if finding.kind == "external-call")
+    print("p101-wrapper-audit summary")
+    print(f"missed_wrappers: {missed}")
+    print(f"external_calls: {external}")
+    for finding in findings:
+        location = f"{finding.path}:{finding.line}:{finding.column}"
+        if finding.kind == "missed-wrapper":
+            print(f"{location}: missed-wrapper: {finding.name} -> {finding.replacement}")
+        else:
+            print(f"{location}: external-call: {finding.name}")
+
+
+def print_json(findings: list[Finding]) -> None:
+    data = {
+        "missed_wrappers": sum(1 for finding in findings if finding.kind == "missed-wrapper"),
+        "external_calls": sum(1 for finding in findings if finding.kind == "external-call"),
+        "findings": [finding.__dict__ for finding in findings],
+    }
+    print(json.dumps(data, indent=2, sort_keys=True))
+
+
+def main(argv: list[str]) -> int:
+    args = parse_args(argv)
+    paths = [Path(path).resolve() for path in args.paths]
+    inventory = wrapper_inventory(args.header_root)
+
+    if args.show_inventory:
+        print_inventory(inventory)
+        return 0
+
+    compile_db = load_compile_db(args.compile_db or find_compile_db(paths))
+    units = discover_sources(paths, compile_db)
+    if not units:
+        print("p101-wrapper-audit: no source translation units found", file=sys.stderr)
+        return 2
+
+    try:
+        units_and_asts = [(unit, clang_ast(args.clang, unit)) for unit in units]
+    except (OSError, RuntimeError, json.JSONDecodeError) as exc:
+        print(f"p101-wrapper-audit: {exc}", file=sys.stderr)
+        return 2
+
+    local_functions = collect_local_functions(units_and_asts, paths)
+    findings = collect_findings(units_and_asts, paths, local_functions, inventory, set(args.allow))
+
+    if args.json:
+        print_json(findings)
+    else:
+        print_text(findings)
+
+    missed = any(finding.kind == "missed-wrapper" for finding in findings)
+    external = any(finding.kind == "external-call" for finding in findings)
+    if missed or (args.strict_external and external):
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
