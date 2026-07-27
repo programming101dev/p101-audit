@@ -125,6 +125,92 @@ def test_compile_db_without_source_command_is_clear() -> None:
         assert "compile database has no command" in result.stderr
 
 
+def test_timeout_must_be_positive() -> None:
+    result = run_tool("--timeout", "0", ".")
+    assert result.returncode == 2
+    assert "--timeout must be greater than zero" in result.stderr
+
+
+def test_keep_going_reports_partial_results_and_parse_failures() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        bad = root / "bad.c"
+        good = root / "good.c"
+        bad.write_text("int broken(void) {\n", encoding="utf-8")
+        good.write_text(
+            """
+            #include <stdlib.h>
+            int main(void) {
+                void *p = malloc(4);
+                return p == 0;
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        stopped = run_tool(str(root))
+        assert stopped.returncode == 2
+        assert "clang failed" in stopped.stderr
+
+        continued = run_tool("--keep-going", str(root))
+        assert continued.returncode == 2
+        assert "skipped" in continued.stderr
+        assert "parse_failures: 1" in continued.stdout
+        assert "missed-wrapper: malloc" in continued.stdout
+
+
+def test_static_inline_header_calls_are_audited_at_header_location() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        header = root / "helper.h"
+        source = root / "main.c"
+        header.write_text(
+            """
+            #ifndef HELPER_H
+            #define HELPER_H
+            #include <stdlib.h>
+            static inline void *helper_make(void) {
+                return malloc(4);
+            }
+            #endif
+            """,
+            encoding="utf-8",
+        )
+        source.write_text(
+            """
+            #include "helper.h"
+            int main(void) {
+                return helper_make() == 0;
+            }
+            """,
+            encoding="utf-8",
+        )
+        result = run_tool(f"--cflag=-I{root}", str(root))
+        assert result.returncode == 1, result.stderr + result.stdout
+        assert f"{header.resolve()}:6:" in result.stdout
+        assert "missed-wrapper: malloc" in result.stdout
+
+
+def test_indirect_function_pointer_calls_are_reported_as_boundaries() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        source.write_text(
+            """
+            int puts(const char *);
+            int main(void) {
+                int (*fp)(const char *) = puts;
+                return fp("hello");
+            }
+            """,
+            encoding="utf-8",
+        )
+        result = run_tool(str(source))
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "indirect_calls: 1" in result.stdout
+        assert "indirect-call: fp" in result.stdout
+        assert "external-call: fp" not in result.stdout
+
+
 def test_module_fact_output_uses_clang_ast_for_c_facts() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
@@ -209,6 +295,10 @@ def main() -> int:
         test_inventory_json_output,
         test_missing_compile_db_is_clear,
         test_compile_db_without_source_command_is_clear,
+        test_timeout_must_be_positive,
+        test_keep_going_reports_partial_results_and_parse_failures,
+        test_static_inline_header_calls_are_audited_at_header_location,
+        test_indirect_function_pointer_calls_are_reported_as_boundaries,
         test_module_fact_output_uses_clang_ast_for_c_facts,
         test_module_facts_include_bool_returning_definitions,
     ]

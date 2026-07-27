@@ -30,6 +30,7 @@ from typing import Any, Iterable
 SOURCE_SUFFIXES = {".c", ".cc", ".cpp", ".cxx", ".m", ".mm"}
 HEADER_SUFFIXES = {".h", ".hh", ".hpp", ".hxx"}
 CLANG_AST_TIMEOUT_SECONDS = 30
+COMPILE_DB_PARENT_LIMIT = 8
 SKIP_DIRS = {
     ".git",
     ".hg",
@@ -75,6 +76,12 @@ class Finding:
     hint: str
 
 
+@dataclass(frozen=True)
+class ParseFailure:
+    path: str
+    message: str
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Find calls that cross outside the local/p101 wrapper boundary.",
@@ -87,6 +94,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--compile-db", type=Path, help="compile_commands.json path")
     parser.add_argument("--cflag", action="append", default=[], help="extra compiler flag for files not present in compile_commands.json; may be repeated")
     parser.add_argument("--header-root", action="append", type=Path, default=[], help="root containing p101 headers; may be repeated")
+    parser.add_argument("--timeout", type=float, default=CLANG_AST_TIMEOUT_SECONDS, metavar="SECONDS", help=f"per-translation-unit Clang timeout; default {CLANG_AST_TIMEOUT_SECONDS}")
+    parser.add_argument("--keep-going", action="store_true", help="continue after translation-unit parse failures and report the skipped files")
     parser.add_argument("--show-inventory", action="store_true", help="print generated wrapper inventory and exit")
     parser.add_argument("--show-inventory-json", action="store_true", help="print generated wrapper inventory as JSON and exit")
     parser.add_argument("--emit-module-facts", action="store_true", help="emit Clang-derived module facts as TSV and exit")
@@ -113,10 +122,14 @@ def find_compile_db(start_paths: list[Path]) -> Path | None:
     candidates: list[Path] = []
     for path in start_paths:
         cursor = path if path.is_dir() else path.parent
-        for parent in [cursor, *cursor.parents]:
+        for index, parent in enumerate([cursor, *cursor.parents]):
+            if index > COMPILE_DB_PARENT_LIMIT:
+                break
             candidates.append(parent / "compile_commands.json")
             for build_name in ("build-clang", "build", "build-clang-22"):
                 candidates.append(parent / build_name / "compile_commands.json")
+            if (parent / ".git").exists():
+                break
 
     seen: set[Path] = set()
     for candidate in candidates:
@@ -225,7 +238,7 @@ def add_atomic_aliases(inventory: dict[str, str]) -> None:
             inventory.setdefault(f"atomic_{base}", wrapper)
 
 
-def clang_ast(command: str, tu: TranslationUnit, extra_cflags: list[str]) -> dict[str, Any]:
+def clang_ast(command: str, tu: TranslationUnit, extra_cflags: list[str], timeout: float) -> dict[str, Any]:
     if tu.command:
         ast_command = ast_command_from_compile_command(command, tu)
     else:
@@ -233,7 +246,10 @@ def clang_ast(command: str, tu: TranslationUnit, extra_cflags: list[str]) -> dic
         standard = "c++17" if "c++" in language else "c17"
         ast_command = [command, "-x", language, f"-std={standard}", *extra_cflags, "-fsyntax-only", "-Xclang", "-ast-dump=json", str(tu.source)]
 
-    proc = subprocess.run(ast_command, cwd=str(tu.directory or tu.source.parent), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=CLANG_AST_TIMEOUT_SECONDS)
+    try:
+        proc = subprocess.run(ast_command, cwd=str(tu.directory or tu.source.parent), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"clang timed out after {timeout:g}s for {tu.source}") from exc
     if proc.returncode != 0:
         raise RuntimeError(f"clang failed for {tu.source}:\n{proc.stderr}")
     return json.loads(proc.stdout)
@@ -317,10 +333,49 @@ def spelling_location(node: dict[str, Any], default_file: Path | None = None, so
         offset = loc.get("offset")
         if offset is None:
             offset = range_begin.get("offset")
-        if isinstance(offset, int):
+        offset_belongs_to_default_file = file_path is None or default_file is None or file_path == default_file
+        if isinstance(offset, int) and offset_belongs_to_default_file:
             line, column = line_col_from_offset(source_bytes, offset)
             if allow_default_file and "includedFrom" not in loc and "includedFrom" not in range_begin:
                 file_path = file_path or default_file
+    return file_path, line, column
+
+
+def node_offset(node: dict[str, Any]) -> int | None:
+    loc = node.get("loc", {}) or {}
+    if "spellingLoc" in loc:
+        loc = loc["spellingLoc"]
+    offset = loc.get("offset")
+    if isinstance(offset, int):
+        return offset
+    range_begin = ((node.get("range", {}) or {}).get("begin", {}) or {})
+    if "expansionLoc" in range_begin:
+        range_begin = range_begin["expansionLoc"]
+    elif "spellingLoc" in range_begin:
+        range_begin = range_begin["spellingLoc"]
+    offset = range_begin.get("offset")
+    return offset if isinstance(offset, int) else None
+
+
+def spelling_location_with_ancestors(node: dict[str, Any], ancestors: tuple[dict[str, Any], ...], default_file: Path | None = None, source_bytes: bytes | None = None, allow_default_file: bool = True) -> tuple[Path | None, int, int]:
+    file_path, line, column = spelling_location(node, default_file, source_bytes, allow_default_file)
+    if file_path is not None:
+        return file_path, line, column
+
+    for ancestor in reversed(ancestors):
+        if ancestor.get("kind") != "FunctionDecl":
+            continue
+        ancestor_file, _, _ = spelling_location(ancestor, default_file, source_bytes, allow_default_file=False)
+        if ancestor_file is None:
+            continue
+        offset = node_offset(node)
+        if offset is not None:
+            try:
+                line, column = line_col_from_offset(ancestor_file.read_bytes(), offset)
+            except OSError:
+                pass
+        return ancestor_file, line, column
+
     return file_path, line, column
 
 
@@ -358,27 +413,35 @@ def collect_local_functions(units_and_asts: list[tuple[TranslationUnit, dict[str
 
 
 def call_name(node: dict[str, Any]) -> str | None:
+    name, _ = call_target(node)
+    return name
+
+
+def call_target(node: dict[str, Any]) -> tuple[str | None, str | None]:
     referenced = node.get("referencedDecl")
     if isinstance(referenced, dict) and referenced.get("name"):
-        return str(referenced["name"])
-    for child in node.get("inner", []) or []:
-        if isinstance(child, dict) and child.get("kind") in {"ImplicitCastExpr", "DeclRefExpr"}:
-            name = declref_name(child)
-            if name:
-                return name
-    return None
+        return str(referenced["name"]), str(referenced.get("kind", ""))
+    inner = node.get("inner", []) or []
+    if inner and isinstance(inner[0], dict):
+        return declref_info(inner[0])
+    return None, None
 
 
 def declref_name(node: dict[str, Any]) -> str | None:
+    name, _ = declref_info(node)
+    return name
+
+
+def declref_info(node: dict[str, Any]) -> tuple[str | None, str | None]:
     referenced = node.get("referencedDecl")
     if isinstance(referenced, dict) and referenced.get("name"):
-        return str(referenced["name"])
+        return str(referenced["name"]), str(referenced.get("kind", ""))
     for child in node.get("inner", []) or []:
         if isinstance(child, dict):
-            name = declref_name(child)
+            name, kind = declref_info(child)
             if name:
-                return name
-    return None
+                return name, kind
+    return None, None
 
 
 def collect_findings(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]], roots: list[Path], locals_: set[str], inventory: dict[str, str], allow: set[str]) -> list[Finding]:
@@ -390,20 +453,25 @@ def collect_findings(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]
         for node, ancestors in iter_nodes_with_ancestors(ast):
             if node.get("kind") != "CallExpr":
                 continue
-            name = call_name(node)
+            name, target_kind = call_target(node)
             if not name or name in CONTROL_CALLEES or name.startswith("p101_") or name in locals_ or name in allow:
                 continue
-            wrapper = inventory.get(name, "")
+            is_indirect = target_kind not in {None, "", "FunctionDecl", "CXXMethodDecl", "FunctionTemplateDecl"}
+            wrapper = "" if is_indirect else inventory.get(name, "")
             if wrapper and enclosing_function_name(ancestors) == wrapper:
                 continue
             replacement = wrapper
-            file_path, line, column = spelling_location(node, unit.source, source_bytes)
+            file_path, line, column = spelling_location_with_ancestors(node, ancestors, unit.source, source_bytes)
             if file_path is None or not is_under(file_path, roots):
                 continue
 
-            kind = "missed-wrapper" if replacement else "external-call"
-            category = "wrapped" if replacement else "external"
-            hint = replacement_hint(name, replacement)
+            if is_indirect:
+                kind = "indirect-call"
+                category = "indirect"
+            else:
+                kind = "missed-wrapper" if replacement else "external-call"
+                category = "wrapped" if replacement else "external"
+            hint = replacement_hint(name, replacement, is_indirect)
             key = (str(file_path), line, column, name)
             if key in seen:
                 continue
@@ -413,9 +481,11 @@ def collect_findings(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]
     return sorted(findings, key=lambda item: (item.path, item.line, item.column, item.name))
 
 
-def replacement_hint(name: str, replacement: str) -> str:
+def replacement_hint(name: str, replacement: str, is_indirect: bool = False) -> str:
     if replacement:
         return f"use {replacement}(env, err, ...) instead of raw {name}(...) when the surrounding code is p101-aware"
+    if is_indirect:
+        return f"indirect/non-p101 call through {name}; wrapper-audit cannot prove the runtime target, so keep this at a documented boundary"
     return "external/non-p101 call; allow it explicitly, wrap it, or keep it at a documented boundary"
 
 
@@ -432,27 +502,41 @@ def print_inventory_json(inventory: dict[str, str]) -> None:
     print(json.dumps(data, indent=2, sort_keys=True))
 
 
-def print_text(findings: list[Finding]) -> None:
+def print_text(findings: list[Finding], parse_failures: list[ParseFailure] | None = None) -> None:
+    parse_failures = parse_failures or []
     missed = sum(1 for finding in findings if finding.kind == "missed-wrapper")
     external = sum(1 for finding in findings if finding.kind == "external-call")
+    indirect = sum(1 for finding in findings if finding.kind == "indirect-call")
     print("p101-wrapper-audit summary")
     print(f"missed_wrappers: {missed}")
     print(f"external_calls: {external}")
+    print(f"indirect_calls: {indirect}")
+    print(f"parse_failures: {len(parse_failures)}")
+    for failure in parse_failures:
+        print(f"{failure.path}: parse-failure")
+        print(f"  hint: {failure.message}")
     for finding in findings:
         location = f"{finding.path}:{finding.line}:{finding.column}"
         if finding.kind == "missed-wrapper":
             print(f"{location}: missed-wrapper: {finding.name} -> {finding.replacement}")
+            print(f"  hint: {finding.hint}")
+        elif finding.kind == "indirect-call":
+            print(f"{location}: indirect-call: {finding.name}")
             print(f"  hint: {finding.hint}")
         else:
             print(f"{location}: external-call: {finding.name}")
             print(f"  hint: {finding.hint}")
 
 
-def print_json(findings: list[Finding]) -> None:
+def print_json(findings: list[Finding], parse_failures: list[ParseFailure] | None = None) -> None:
+    parse_failures = parse_failures or []
     data = {
         "missed_wrappers": sum(1 for finding in findings if finding.kind == "missed-wrapper"),
         "external_calls": sum(1 for finding in findings if finding.kind == "external-call"),
+        "indirect_calls": sum(1 for finding in findings if finding.kind == "indirect-call"),
+        "parse_failures": len(parse_failures),
         "findings": [finding.__dict__ for finding in findings],
+        "parse_failure_details": [failure.__dict__ for failure in parse_failures],
     }
     print(json.dumps(data, indent=2, sort_keys=True))
 
@@ -613,6 +697,9 @@ def print_module_facts(units: list[TranslationUnit], facts: list[tuple[str, Path
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if args.timeout <= 0:
+        print("p101-wrapper-audit: --timeout must be greater than zero", file=sys.stderr)
+        return 2
     paths = [Path(path).resolve() for path in args.paths]
     try:
         inventory = wrapper_inventory(args.header_root)
@@ -658,29 +745,45 @@ def main(argv: list[str]) -> int:
             print("p101-wrapper-audit: rebuild the target or pass the compile_commands.json that matches these sources.", file=sys.stderr)
             return 2
 
-    try:
-        units_and_asts = [(unit, clang_ast(args.clang, unit, args.cflag)) for unit in units]
-    except (OSError, RuntimeError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
-        print(f"p101-wrapper-audit: {exc}", file=sys.stderr)
-        if args.compile_db is not None:
-            print("p101-wrapper-audit: the compile database may be stale or from a different build tree.", file=sys.stderr)
-        return 2
+    units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]] = []
+    parse_failures: list[ParseFailure] = []
+    for unit in units:
+        try:
+            units_and_asts.append((unit, clang_ast(args.clang, unit, args.cflag, args.timeout)))
+        except (OSError, RuntimeError, json.JSONDecodeError) as exc:
+            message = str(exc)
+            parse_failures.append(ParseFailure(path=str(unit.source), message=message))
+            if not args.keep_going:
+                print(f"p101-wrapper-audit: {message}", file=sys.stderr)
+                if args.compile_db is not None:
+                    print("p101-wrapper-audit: the compile database may be stale or from a different build tree.", file=sys.stderr)
+                return 2
+
+    if parse_failures and args.keep_going:
+        for failure in parse_failures:
+            print(f"p101-wrapper-audit: skipped {failure.path}: {failure.message}", file=sys.stderr)
+        if not units_and_asts:
+            return 2
 
     if args.emit_module_facts:
-        print_module_facts(units, collect_module_facts(units_and_asts, paths))
-        return 0
+        parsed_units = [unit for unit, _ in units_and_asts]
+        print_module_facts(parsed_units, collect_module_facts(units_and_asts, paths))
+        return 2 if parse_failures else 0
 
     local_functions = collect_local_functions(units_and_asts, paths)
     findings = collect_findings(units_and_asts, paths, local_functions, inventory, set(args.allow))
 
     if args.json:
-        print_json(findings)
+        print_json(findings, parse_failures)
     else:
-        print_text(findings)
+        print_text(findings, parse_failures)
 
     missed = any(finding.kind == "missed-wrapper" for finding in findings)
     external = any(finding.kind == "external-call" for finding in findings)
-    if missed or (args.strict_external and external):
+    indirect = any(finding.kind == "indirect-call" for finding in findings)
+    if parse_failures:
+        return 2
+    if missed or (args.strict_external and (external or indirect)):
         return 1
     return 0
 
