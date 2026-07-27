@@ -45,6 +45,8 @@ CONTROL_CALLEES = {
     "__builtin_va_arg",
     "__builtin_choose_expr",
     "__builtin_offsetof",
+    "__errno_location",
+    "__error",
 }
 DEFAULT_HEADER_ROOTS = [
     Path(__file__).resolve().parents[2] / "libraries",
@@ -203,7 +205,10 @@ def wrapper_inventory(header_roots: list[Path]) -> dict[str, str]:
         for header in root.rglob("*.h"):
             if "p101" not in str(header):
                 continue
-            text = header.read_text(encoding="utf-8", errors="ignore")
+            try:
+                text = header.read_text(encoding="utf-8", errors="ignore")
+            except OSError as exc:
+                raise RuntimeError(f"could not read header {header}: {exc}") from exc
             for match in pattern.finditer(text):
                 original = match.group(1)
                 wrapper = f"p101_{original}"
@@ -285,14 +290,14 @@ def location_file(loc: dict[str, Any]) -> Path | None:
     return Path(file_text).resolve()
 
 
-def line_col_from_offset(source_text: str, offset: int) -> tuple[int, int]:
-    line = source_text.count("\n", 0, offset) + 1
-    previous_newline = source_text.rfind("\n", 0, offset)
+def line_col_from_offset(source_bytes: bytes, offset: int) -> tuple[int, int]:
+    line = source_bytes.count(b"\n", 0, offset) + 1
+    previous_newline = source_bytes.rfind(b"\n", 0, offset)
     column = offset + 1 if previous_newline < 0 else offset - previous_newline
     return line, column
 
 
-def spelling_location(node: dict[str, Any], default_file: Path | None = None, source_text: str | None = None, allow_default_file: bool = True) -> tuple[Path | None, int, int]:
+def spelling_location(node: dict[str, Any], default_file: Path | None = None, source_bytes: bytes | None = None, allow_default_file: bool = True) -> tuple[Path | None, int, int]:
     loc = node.get("loc", {}) or {}
     if "spellingLoc" in loc:
         loc = loc["spellingLoc"]
@@ -308,22 +313,36 @@ def spelling_location(node: dict[str, Any], default_file: Path | None = None, so
             loc = range_begin
     line = int(loc.get("line", 0) or 0)
     column = int(loc.get("col", 0) or 0)
-    if source_text is not None:
+    if source_bytes is not None:
         offset = loc.get("offset")
         if offset is None:
             offset = range_begin.get("offset")
         if isinstance(offset, int):
-            if line == 0:
-                line, column = line_col_from_offset(source_text, offset)
+            line, column = line_col_from_offset(source_bytes, offset)
             if allow_default_file and "includedFrom" not in loc and "includedFrom" not in range_begin:
                 file_path = file_path or default_file
     return file_path, line, column
 
 
+def iter_nodes_with_ancestors(node: dict[str, Any], ancestors: tuple[dict[str, Any], ...] = ()) -> Iterable[tuple[dict[str, Any], tuple[dict[str, Any], ...]]]:
+    yield node, ancestors
+    next_ancestors = (*ancestors, node)
+    for child in node.get("inner", []) or []:
+        if isinstance(child, dict):
+            yield from iter_nodes_with_ancestors(child, next_ancestors)
+
+
+def enclosing_function_name(ancestors: tuple[dict[str, Any], ...]) -> str | None:
+    for ancestor in reversed(ancestors):
+        if ancestor.get("kind") == "FunctionDecl" and ancestor.get("name") and node_has_body(ancestor):
+            return str(ancestor["name"])
+    return None
+
+
 def collect_local_functions(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]], roots: list[Path]) -> set[str]:
     names: set[str] = set()
     for unit, ast in units_and_asts:
-        source_text = unit.source.read_text(encoding="utf-8", errors="ignore")
+        source_bytes = unit.source.read_bytes()
         for node in iter_nodes(ast):
             if node.get("kind") != "FunctionDecl":
                 continue
@@ -332,7 +351,7 @@ def collect_local_functions(units_and_asts: list[tuple[TranslationUnit, dict[str
             name = node.get("name")
             if not name:
                 continue
-            file_path, _, _ = spelling_location(node, unit.source, source_text)
+            file_path, _, _ = spelling_location(node, unit.source, source_bytes)
             if file_path is not None and is_under(file_path, roots):
                 names.add(str(name))
     return names
@@ -367,18 +386,21 @@ def collect_findings(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]
     seen: set[tuple[str, int, int, str]] = set()
 
     for unit, ast in units_and_asts:
-        source_text = unit.source.read_text(encoding="utf-8", errors="ignore")
-        for node in iter_nodes(ast):
+        source_bytes = unit.source.read_bytes()
+        for node, ancestors in iter_nodes_with_ancestors(ast):
             if node.get("kind") != "CallExpr":
                 continue
             name = call_name(node)
             if not name or name in CONTROL_CALLEES or name.startswith("p101_") or name in locals_ or name in allow:
                 continue
-            file_path, line, column = spelling_location(node, unit.source, source_text)
+            wrapper = inventory.get(name, "")
+            if wrapper and enclosing_function_name(ancestors) == wrapper:
+                continue
+            replacement = wrapper
+            file_path, line, column = spelling_location(node, unit.source, source_bytes)
             if file_path is None or not is_under(file_path, roots):
                 continue
 
-            replacement = inventory.get(name, "")
             kind = "missed-wrapper" if replacement else "external-call"
             category = "wrapped" if replacement else "external"
             hint = replacement_hint(name, replacement)
@@ -513,7 +535,7 @@ def collect_module_facts(units_and_asts: list[tuple[TranslationUnit, dict[str, A
     seen: set[tuple[str, str, int, tuple[object, ...]]] = set()
 
     for unit, ast in units_and_asts:
-        source_text = unit.source.read_text(encoding="utf-8", errors="ignore")
+        source_bytes = unit.source.read_bytes()
         for path_fact in source_line_facts(unit.source):
             kind, line, fields = path_fact
             key = (kind, str(unit.source), line, fields)
@@ -528,7 +550,7 @@ def collect_module_facts(units_and_asts: list[tuple[TranslationUnit, dict[str, A
 
             unit_is_header = unit.source.suffix in HEADER_SUFFIXES
             allow_default_file = kind in {"CallExpr", "ParmVarDecl", "VarDecl"} or (unit_is_header and kind in {"FunctionDecl", "TypedefDecl", "RecordDecl"}) or (kind == "FunctionDecl" and node_has_body(node))
-            file_path, line, _ = spelling_location(node, unit.source, source_text, allow_default_file=allow_default_file)
+            file_path, line, _ = spelling_location(node, unit.source, source_bytes, allow_default_file=allow_default_file)
             if file_path is None or not is_under(file_path, roots):
                 continue
             line = line or 1
@@ -592,7 +614,11 @@ def print_module_facts(units: list[TranslationUnit], facts: list[tuple[str, Path
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     paths = [Path(path).resolve() for path in args.paths]
-    inventory = wrapper_inventory(args.header_root)
+    try:
+        inventory = wrapper_inventory(args.header_root)
+    except RuntimeError as exc:
+        print(f"p101-wrapper-audit: {exc}", file=sys.stderr)
+        return 2
 
     if args.show_inventory:
         print_inventory(inventory)
