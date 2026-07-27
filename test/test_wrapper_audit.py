@@ -298,6 +298,44 @@ def test_module_facts_include_bool_returning_definitions() -> None:
         assert source_fact in result.stdout
 
 
+def test_module_facts_parse_cxx_headers_as_cxx() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        include = root / "include"
+        src = root / "src"
+        include.mkdir()
+        src.mkdir()
+        header = include / "display.hpp"
+        source = src / "display.cpp"
+        header.write_text(
+            """
+            #ifndef DISPLAY_HPP
+            #define DISPLAY_HPP
+            struct p101_env;
+            struct p101_error;
+            using callback_t = int (*)(int);
+            void display(const p101_env *env, p101_error *err, const char *msg);
+            #endif
+            """,
+            encoding="utf-8",
+        )
+        source.write_text(
+            """
+            #include "../include/display.hpp"
+            void display(const p101_env *env, p101_error *err, const char *msg) {
+                (void)env;
+                (void)err;
+                (void)msg;
+            }
+            """,
+            encoding="utf-8",
+        )
+        result = run_tool("--emit-module-facts", f"--cflag=-I{include}", str(src), str(include))
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "\tFUNCTION\t" in result.stdout
+        assert "\tdisplay\t" in result.stdout
+
+
 def main() -> int:
     tests = [
         test_missed_wrapper_and_local_function,
@@ -313,6 +351,7 @@ def main() -> int:
         test_indirect_function_pointer_calls_are_reported_as_boundaries,
         test_module_fact_output_uses_clang_ast_for_c_facts,
         test_module_facts_include_bool_returning_definitions,
+        test_module_facts_parse_cxx_headers_as_cxx,
     ]
     for test in tests:
         test()
