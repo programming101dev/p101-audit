@@ -26,7 +26,7 @@ are escaped as `\\`, `\t`, `\n`, and `\r`.
 | `CALL` | `name` | A call expression found by Clang's AST. |
 | `TYPE` | `name` | A typedef or record declaration exposed by a header. |
 | `MACRO` | `name` | A macro definition, excluding ordinary include guards. |
-| `NOTE` | `name` | A teaching note such as `ERROR_USE` or `ERROR_CHECK`. |
+| `NOTE` | `name` | A teaching note such as `ENV_CONTRACT`, `ERROR_CONTRACT`, `ENV_USE`, `ERROR_USE`, `TRACE_USE`, or `ERROR_CHECK`. |
 
 ## Ownership rule
 
@@ -40,3 +40,9 @@ The only line-oriented extraction in the producer is for preprocessor facts such
 as includes and macros, because the JSON AST dump does not expose those in a
 portable, useful shape for this workflow. Function, call, type, and declaration
 facts come from Clang.
+
+`ENV_CONTRACT` and `ERROR_CONTRACT` are emitted on a function declaration line
+when Clang sees a `p101_env` or `p101_error` parameter. `ENV_USE` and
+`ERROR_USE` mark visible local/parameter declarations of those types.
+`TRACE_USE` and `ERROR_CHECK` mark macro/helper uses that may not appear as
+ordinary calls in the AST.

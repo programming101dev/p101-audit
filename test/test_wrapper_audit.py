@@ -232,7 +232,15 @@ def test_module_fact_output_uses_clang_ast_for_c_facts() -> None:
             """
             #include "thing.h"
             #include <stdio.h>
+            #include <p101_env/env.h>
+            #include <p101_error/error.h>
             static int helper(int value) { return value + 1; }
+            static void traced(const struct p101_env *env, struct p101_error *err) {
+                P101_TRACE(env);
+                if(p101_error_has_error(err)) {
+                    P101_ERROR_RAISE_USER(err, "bad", 1);
+                }
+            }
             int thing_run(int value) {
                 return printf("%d\\n", helper(value));
             }
@@ -247,6 +255,10 @@ def test_module_fact_output_uses_clang_ast_for_c_facts() -> None:
         assert "\tCALL\t" in result.stdout
         assert "\tprintf" in result.stdout
         assert "\thelper" in result.stdout
+        assert "\tENV_CONTRACT" in result.stdout
+        assert "\tERROR_CONTRACT" in result.stdout
+        assert "\tTRACE_USE" in result.stdout
+        assert "\tERROR_CHECK" in result.stdout
         assert "\tTYPE\t" in result.stdout
         assert "\tthing_callback" in result.stdout
         assert "\tthing_state" in result.stdout

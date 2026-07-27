@@ -586,9 +586,13 @@ def source_line_facts(path: Path) -> Iterable[tuple[str, int, tuple[object, ...]
                 yield ("MACRO", line_number, (name,))
 
         if path.suffix not in HEADER_SUFFIXES:
-            if "struct p101_error" in stripped or "p101_error_" in stripped or "P101_ERROR_" in stripped:
+            if "struct p101_env" in stripped:
+                yield ("NOTE", line_number, ("ENV_USE",))
+            if re.search(r"\bP101_TRACE\s*\(", stripped):
+                yield ("NOTE", line_number, ("TRACE_USE",))
+            if "struct p101_error" in stripped:
                 yield ("NOTE", line_number, ("ERROR_USE",))
-            if "P101_ERROR_" in stripped or "p101_error_has_" in stripped or "p101_error_is_" in stripped or "p101_error_reset" in stripped:
+            if re.search(r"\b(P101_ERROR_[A-Za-z0-9_]*|p101_error_has_[A-Za-z0-9_]*|p101_error_is_[A-Za-z0-9_]*|p101_error_reset)\s*\(", stripped):
                 yield ("NOTE", line_number, ("ERROR_CHECK",))
 
 
@@ -612,6 +616,15 @@ def node_type_text(node: dict[str, Any]) -> str:
     if isinstance(type_info, dict):
         return str(type_info.get("qualType", ""))
     return ""
+
+
+def function_has_parameter_type(node: dict[str, Any], needle: str) -> bool:
+    for child in node.get("inner", []) or []:
+        if not isinstance(child, dict):
+            continue
+        if child.get("kind") == "ParmVarDecl" and needle in node_type_text(child):
+            return True
+    return False
 
 
 def collect_module_facts(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]], roots: list[Path]) -> list[tuple[str, Path, int, tuple[object, ...]]]:
@@ -651,6 +664,18 @@ def collect_module_facts(units_and_asts: list[tuple[TranslationUnit, dict[str, A
                     if key not in seen:
                         seen.add(key)
                         facts.append(("FUNCTION", file_path, line, fields))
+                    if function_has_parameter_type(node, "p101_env"):
+                        fields = ("ENV_CONTRACT",)
+                        key = ("NOTE", str(file_path), line, fields)
+                        if key not in seen:
+                            seen.add(key)
+                            facts.append(("NOTE", file_path, line, fields))
+                    if function_has_parameter_type(node, "p101_error"):
+                        fields = ("ERROR_CONTRACT",)
+                        key = ("NOTE", str(file_path), line, fields)
+                        if key not in seen:
+                            seen.add(key)
+                            facts.append(("NOTE", file_path, line, fields))
                 continue
 
             if kind == "CallExpr":
@@ -673,12 +698,20 @@ def collect_module_facts(units_and_asts: list[tuple[TranslationUnit, dict[str, A
                         facts.append(("TYPE", file_path, line, fields))
                 continue
 
-            if not is_header and kind in {"ParmVarDecl", "VarDecl"} and "p101_error" in node_type_text(node):
-                fields = ("ERROR_USE",)
-                key = ("NOTE", str(file_path), line, fields)
-                if key not in seen:
-                    seen.add(key)
-                    facts.append(("NOTE", file_path, line, fields))
+            if not is_header and kind in {"ParmVarDecl", "VarDecl"}:
+                type_text = node_type_text(node)
+                if "p101_env" in type_text:
+                    fields = ("ENV_USE",)
+                    key = ("NOTE", str(file_path), line, fields)
+                    if key not in seen:
+                        seen.add(key)
+                        facts.append(("NOTE", file_path, line, fields))
+                if "p101_error" in type_text:
+                    fields = ("ERROR_USE",)
+                    key = ("NOTE", str(file_path), line, fields)
+                    if key not in seen:
+                        seen.add(key)
+                        facts.append(("NOTE", file_path, line, fields))
 
     return sorted(facts, key=lambda item: (str(item[1]), item[2], item[0], item[3]))
 
