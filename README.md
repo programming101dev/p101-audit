@@ -58,6 +58,31 @@ The wrapper inventory is part of the trust boundary. A normal audit fails as a
 setup error if no p101 wrappers can be inventoried, because an empty inventory
 would otherwise make direct calls look harmless.
 
+## Trust boundary and blind spots
+
+This tool is a gate for the code it successfully parses. It is not a whole
+process instrumentation proof.
+
+It can see:
+
+- direct calls in translation units parsed by Clang;
+- calls hidden behind macros after preprocessing;
+- p101 wrapper functions inventoried from the configured p101 headers;
+- indirect calls as an explicit audit boundary.
+
+It cannot see:
+
+- source files that are not part of the compile database or path list;
+- translation units skipped after parser/tool errors;
+- behavior inside third-party libraries;
+- libc calls made by dependencies after your code calls them;
+- the runtime effect of function pointers whose target is only known at run
+  time.
+
+For teaching, that is the intended ceiling: the audit tells students whether
+their code follows the wrapper contract. Pair it with `p101-observe`,
+`p101-resource-tracker`, and sanitizers for runtime behavior.
+
 ## Exit status
 
 | Status | Meaning |
