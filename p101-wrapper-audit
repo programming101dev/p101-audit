@@ -16,10 +16,13 @@ external calls are reported as inventory unless --strict-external is used.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import hashlib
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -66,10 +69,12 @@ class TranslationUnit:
 
 @dataclass(frozen=True)
 class Finding:
+    diagnostic_id: str
     path: str
     line: int
     column: int
     name: str
+    caller: str
     kind: str
     replacement: str
     category: str
@@ -82,6 +87,16 @@ class ParseFailure:
     message: str
 
 
+@dataclass
+class AllowRule:
+    path: str
+    function: str
+    callee: str
+    source: str
+    line: int
+    used: bool = False
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Find calls that cross outside the local/p101 wrapper boundary.",
@@ -90,8 +105,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("-j", "--json", action="store_true", help="emit JSON")
     parser.add_argument("-e", "--strict-external", action="store_true", help="treat unmapped external calls as findings")
     parser.add_argument("-a", "--allow", action="append", default=[], metavar="NAME", help="allow an external callee name; may be repeated")
+    parser.add_argument("--allow-file", action="append", type=Path, default=[], metavar="FILE", help="read path:function:callee boundary rules from FILE")
     parser.add_argument("--clang", default=os.environ.get("P101_WRAPPER_AUDIT_CLANG", "clang"), help="clang executable")
     parser.add_argument("--compile-db", type=Path, help="compile_commands.json path")
+    parser.add_argument("--compile-db-only", action="store_true", help="audit only active source translation units listed in the compile database")
     parser.add_argument("--cflag", action="append", default=[], help="extra compiler flag for files not present in compile_commands.json; may be repeated")
     parser.add_argument("--header-root", action="append", type=Path, default=[], help="root containing p101 headers; may be repeated")
     parser.add_argument("--timeout", type=float, default=CLANG_AST_TIMEOUT_SECONDS, metavar="SECONDS", help=f"per-translation-unit Clang timeout; default {CLANG_AST_TIMEOUT_SECONDS}")
@@ -99,6 +116,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--show-inventory", action="store_true", help="print generated wrapper inventory and exit")
     parser.add_argument("--show-inventory-json", action="store_true", help="print generated wrapper inventory as JSON and exit")
     parser.add_argument("--emit-module-facts", action="store_true", help="emit Clang-derived module facts as TSV and exit")
+    parser.add_argument("--facts-output", type=Path, metavar="FILE", help="write the v2 Clang fact snapshot while performing the audit")
+    parser.add_argument(
+        "--active-headers-only",
+        action="store_true",
+        help="derive header facts only from active translation units instead of parsing every requested header standalone",
+    )
+    parser.add_argument("--input-manifest", type=Path, metavar="FILE", help="write the admitted-input manifest as JSON")
+    parser.add_argument("--instrumentation-output", type=Path, metavar="FILE", help="write per-function tracing, fault, and resource instrumentation coverage as JSON")
     return parser.parse_args(argv)
 
 
@@ -158,7 +183,7 @@ def load_compile_db(path: Path | None) -> dict[Path, dict[str, Any]]:
     return entries
 
 
-def discover_sources(paths: list[Path], compile_db: dict[Path, dict[str, Any]]) -> list[TranslationUnit]:
+def discover_sources(paths: list[Path], compile_db: dict[Path, dict[str, Any]], compile_db_only: bool = False) -> list[TranslationUnit]:
     roots = [path.resolve() for path in paths]
     sources: dict[Path, TranslationUnit] = {}
 
@@ -168,17 +193,18 @@ def discover_sources(paths: list[Path], compile_db: dict[Path, dict[str, Any]]) 
             directory = Path(entry.get("directory", ".")).resolve()
             sources[source] = TranslationUnit(source=source, command=command, directory=directory)
 
-    for path in paths:
-        if path.is_file() and path.suffix in SOURCE_SUFFIXES:
-            sources.setdefault(path.resolve(), TranslationUnit(source=path.resolve(), command=None, directory=path.parent.resolve()))
-        elif path.is_dir():
-            for dirpath, dirnames, filenames in os.walk(path):
-                dirnames[:] = [name for name in dirnames if not is_skipped_dir(Path(name))]
-                directory = Path(dirpath)
-                for filename in filenames:
-                    child = directory / filename
-                    if child.suffix in SOURCE_SUFFIXES:
-                        sources.setdefault(child.resolve(), TranslationUnit(source=child.resolve(), command=None, directory=child.parent.resolve()))
+    if not compile_db_only:
+        for path in paths:
+            if path.is_file() and path.suffix in SOURCE_SUFFIXES:
+                sources.setdefault(path.resolve(), TranslationUnit(source=path.resolve(), command=None, directory=path.parent.resolve()))
+            elif path.is_dir():
+                for dirpath, dirnames, filenames in os.walk(path):
+                    dirnames[:] = [name for name in dirnames if not is_skipped_dir(Path(name))]
+                    directory = Path(dirpath)
+                    for filename in filenames:
+                        child = directory / filename
+                        if child.suffix in SOURCE_SUFFIXES:
+                            sources.setdefault(child.resolve(), TranslationUnit(source=child.resolve(), command=None, directory=child.parent.resolve()))
 
     return sorted(sources.values(), key=lambda item: str(item.source))
 
@@ -205,6 +231,66 @@ def entry_to_command(entry: dict[str, Any]) -> list[str] | None:
     if isinstance(entry.get("command"), str):
         return shlex.split(entry["command"])
     return None
+
+
+def discover_header_include_dirs(header_roots: list[Path]) -> list[Path]:
+    """Find installed-style roots and sibling library include directories."""
+    include_dirs: set[Path] = set()
+
+    for root in [*header_roots, *DEFAULT_HEADER_ROOTS]:
+        if not root.is_dir():
+            continue
+
+        resolved = root.resolve()
+        if any(child.is_dir() and child.name.startswith("p101_") for child in resolved.iterdir()):
+            include_dirs.add(resolved)
+
+        for child in resolved.iterdir():
+            include_dir = child / "include"
+            if include_dir.is_dir():
+                include_dirs.add(include_dir.resolve())
+
+    return sorted(include_dirs, key=str)
+
+
+def header_compile_flags(
+    compile_db: dict[Path, dict[str, Any]],
+    requested_paths: list[Path],
+    user_flags: list[str],
+    header_roots: list[Path],
+) -> list[str]:
+    """Recover the active project's preprocessing view for standalone headers."""
+    flags = list(user_flags)
+    command = None
+    for entry in compile_db.values():
+        command = entry_to_command(entry)
+        if command:
+            break
+    if command:
+        paired = {"-D", "-I", "-U", "-include", "-isystem", "-isysroot", "--sysroot"}
+        index = 1
+        while index < len(command):
+            arg = command[index]
+            if arg in paired and index + 1 < len(command):
+                flags.extend([arg, command[index + 1]])
+                index += 2
+                continue
+            if arg.startswith(("-D", "-I", "-U", "-std=", "--sysroot=")):
+                flags.append(arg)
+            index += 1
+
+    for path in requested_paths:
+        if path.is_dir():
+            flags.append(f"-I{path.resolve()}")
+
+    existing_flags = set(flags)
+    for include_dir in discover_header_include_dirs(header_roots):
+        flag = f"-I{include_dir}"
+        if flag not in existing_flags:
+            flags.append(flag)
+            existing_flags.add(flag)
+
+    return flags
 
 
 def wrapper_inventory(header_roots: list[Path]) -> dict[str, str]:
@@ -240,7 +326,7 @@ def add_atomic_aliases(inventory: dict[str, str]) -> None:
 
 def clang_ast(command: str, tu: TranslationUnit, extra_cflags: list[str], timeout: float) -> dict[str, Any]:
     if tu.command:
-        ast_command = ast_command_from_compile_command(command, tu)
+        ast_command = ast_command_from_compile_command(command, tu, extra_cflags)
     else:
         language = language_for(tu.source)
         standard = "c++17" if "c++" in language else "c17"
@@ -255,7 +341,7 @@ def clang_ast(command: str, tu: TranslationUnit, extra_cflags: list[str], timeou
     return json.loads(proc.stdout)
 
 
-def ast_command_from_compile_command(command: str, tu: TranslationUnit) -> list[str]:
+def ast_command_from_compile_command(command: str, tu: TranslationUnit, extra_cflags: list[str]) -> list[str]:
     original = list(tu.command or [])
     if not original:
         raise ValueError("missing compile command")
@@ -276,7 +362,7 @@ def ast_command_from_compile_command(command: str, tu: TranslationUnit) -> list[
             continue
         result.append(arg)
 
-    result.extend(["-fsyntax-only", "-Xclang", "-ast-dump=json"])
+    result.extend([*extra_cflags, "-fsyntax-only", "-Xclang", "-ast-dump=json"])
     return result
 
 
@@ -414,6 +500,56 @@ def collect_local_functions(units_and_asts: list[tuple[TranslationUnit, dict[str
     return names
 
 
+def collect_instrumentation(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]], roots: list[Path]) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, int]] = set()
+    capability_calls = {
+        "trace_entry": {"p101_env_trace"},
+        "trace_exit": {"p101_env_trace_exit"},
+        "fault": {"p101_env_check_fault", "p101_env_check_fault_action"},
+        "fd": {"p101_env_track_open", "p101_env_track_close", "p101_env_track_fork", "p101_env_track_spawn", "p101_env_track_exec", "p101_env_track_exec_failure"},
+        "allocation": {"p101_env_track_alloc", "p101_env_track_free", "p101_env_track_realloc"},
+        "resource": {"p101_env_track_resource", "p101_env_track_pointer_resource", "p101_env_track_integer_resource"},
+    }
+
+    for unit, ast in units_and_asts:
+        source_bytes = unit.source.read_bytes()
+        for node in iter_nodes(ast):
+            if node.get("kind") != "FunctionDecl" or not node_has_body(node):
+                continue
+            name = str(node.get("name", ""))
+            if not name.startswith("p101_"):
+                continue
+            file_path, line, _ = spelling_location(node, unit.source, source_bytes)
+            if file_path is None or not is_under(file_path, roots):
+                continue
+            key = (str(file_path), name, line)
+            if key in seen:
+                continue
+            seen.add(key)
+            calls = {call_name(child) for child in iter_nodes(node) if child.get("kind") == "CallExpr"}
+            record: dict[str, Any] = {
+                "path": str(file_path),
+                "line": line,
+                "function": name,
+                "has_env": function_has_parameter_type(node, "p101_env"),
+                "has_error": function_has_parameter_type(node, "p101_error"),
+            }
+            for capability, names in capability_calls.items():
+                record[capability] = bool(calls & names)
+            records.append(record)
+    return sorted(records, key=lambda item: (item["path"], item["line"], item["function"]))
+
+
+def write_instrumentation(path: Path, records: list[dict[str, Any]]) -> None:
+    data = {
+        "schema": "p101-instrumentation-coverage-v1",
+        "producer": "p101-wrapper-audit",
+        "functions": records,
+    }
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def call_name(node: dict[str, Any]) -> str | None:
     name, _ = call_target(node)
     return name
@@ -429,12 +565,29 @@ def call_target(node: dict[str, Any]) -> tuple[str | None, str | None]:
     return None, None
 
 
+def call_contract(node: dict[str, Any]) -> tuple[bool, bool]:
+    """Return whether the resolved callee signature requires env and error."""
+    for candidate in iter_nodes(node):
+        referenced = candidate.get("referencedDecl")
+        if not isinstance(referenced, dict):
+            continue
+        type_info = referenced.get("type")
+        if not isinstance(type_info, dict):
+            continue
+        signature = str(type_info.get("qualType", ""))
+        if signature:
+            return "p101_env" in signature, "p101_error" in signature
+    return False, False
+
+
 def declref_name(node: dict[str, Any]) -> str | None:
     name, _ = declref_info(node)
     return name
 
 
 def declref_info(node: dict[str, Any]) -> tuple[str | None, str | None]:
+    if node.get("kind") == "MemberExpr" and node.get("name"):
+        return str(node["name"]), "FieldDecl"
     referenced = node.get("referencedDecl")
     if isinstance(referenced, dict) and referenced.get("name"):
         return str(referenced["name"]), str(referenced.get("kind", ""))
@@ -446,7 +599,21 @@ def declref_info(node: dict[str, Any]) -> tuple[str | None, str | None]:
     return None, None
 
 
-def collect_findings(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]], roots: list[Path], locals_: set[str], inventory: dict[str, str], allow: set[str]) -> list[Finding]:
+def allow_rule_matches(rule: AllowRule, finding: Finding) -> bool:
+    normalized = Path(finding.path).as_posix()
+    path_matches = rule.path == "*" or normalized == rule.path or normalized.endswith(f"/{rule.path}")
+    function_matches = rule.function == "*" or finding.caller == rule.function
+    return path_matches and function_matches and finding.name == rule.callee
+
+
+def collect_findings(
+    units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]],
+    roots: list[Path],
+    locals_: set[str],
+    inventory: dict[str, str],
+    allow: set[str],
+    allow_rules: list[AllowRule],
+) -> list[Finding]:
     findings: list[Finding] = []
     seen: set[tuple[str, int, int, str]] = set()
 
@@ -456,7 +623,7 @@ def collect_findings(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]
             if node.get("kind") != "CallExpr":
                 continue
             name, target_kind = call_target(node)
-            if not name or name in CONTROL_CALLEES or name.startswith("p101_") or name in locals_ or name in allow:
+            if not name or name in CONTROL_CALLEES or name.startswith("__") or name.startswith("_OSSwap") or name.startswith("p101_") or name in locals_ or name in allow:
                 continue
             is_indirect = target_kind not in {None, "", "FunctionDecl", "CXXMethodDecl", "FunctionTemplateDecl"}
             wrapper = "" if is_indirect else inventory.get(name, "")
@@ -478,9 +645,35 @@ def collect_findings(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]
             if key in seen:
                 continue
             seen.add(key)
-            findings.append(Finding(path=str(file_path), line=line, column=column, name=name, kind=kind, replacement=replacement, category=category, hint=hint))
+            finding = Finding(
+                diagnostic_id=diagnostic_id_for_kind(kind),
+                path=str(file_path),
+                line=line,
+                column=column,
+                name=name,
+                caller=enclosing_function_name(ancestors) or "?",
+                kind=kind,
+                replacement=replacement,
+                category=category,
+                hint=hint,
+            )
+            matched = False
+            for rule in allow_rules:
+                if allow_rule_matches(rule, finding):
+                    rule.used = True
+                    matched = True
+            if not matched:
+                findings.append(finding)
 
     return sorted(findings, key=lambda item: (item.path, item.line, item.column, item.name))
+
+
+def diagnostic_id_for_kind(kind: str) -> str:
+    return {
+        "missed-wrapper": "P101-WRAP-001",
+        "external-call": "P101-WRAP-002",
+        "indirect-call": "P101-WRAP-003",
+    }.get(kind, "P101-WRAP-000")
 
 
 def replacement_hint(name: str, replacement: str, is_indirect: bool = False) -> str:
@@ -515,30 +708,47 @@ def print_text(findings: list[Finding], parse_failures: list[ParseFailure] | Non
     print(f"indirect_calls: {indirect}")
     print(f"parse_failures: {len(parse_failures)}")
     for failure in parse_failures:
-        print(f"{failure.path}: parse-failure")
+        print(f"{failure.path}: P101-WRAP-900: parse-failure")
         print(f"  hint: {failure.message}")
     for finding in findings:
         location = f"{finding.path}:{finding.line}:{finding.column}"
         if finding.kind == "missed-wrapper":
-            print(f"{location}: missed-wrapper: {finding.name} -> {finding.replacement}")
+            print(f"{location}: {finding.diagnostic_id}: missed-wrapper: {finding.name} -> {finding.replacement} [{finding.caller}]")
             print(f"  hint: {finding.hint}")
         elif finding.kind == "indirect-call":
-            print(f"{location}: indirect-call: {finding.name}")
+            print(f"{location}: {finding.diagnostic_id}: indirect-call: {finding.name} [{finding.caller}]")
             print(f"  hint: {finding.hint}")
         else:
-            print(f"{location}: external-call: {finding.name}")
+            print(f"{location}: {finding.diagnostic_id}: external-call: {finding.name} [{finding.caller}]")
             print(f"  hint: {finding.hint}")
 
 
 def print_json(findings: list[Finding], parse_failures: list[ParseFailure] | None = None) -> None:
     parse_failures = parse_failures or []
+    finding_rows = []
+    for finding in findings:
+        row = {
+            "id": finding.diagnostic_id,
+            "severity": "error" if finding.kind == "missed-wrapper" else "note",
+            "location": {"path": finding.path, "line": finding.line, "column": finding.column, "function": finding.caller},
+            "message": finding.hint,
+            "evidence": {
+                "parser": "clang-ast",
+                "kind": finding.kind,
+                "callee": finding.name,
+                "replacement": finding.replacement or None,
+                "category": finding.category,
+            },
+        }
+        finding_rows.append(row)
     data = {
+        "schema": "p101-wrapper-audit-findings-v1",
         "missed_wrappers": sum(1 for finding in findings if finding.kind == "missed-wrapper"),
         "external_calls": sum(1 for finding in findings if finding.kind == "external-call"),
         "indirect_calls": sum(1 for finding in findings if finding.kind == "indirect-call"),
         "parse_failures": len(parse_failures),
-        "findings": [finding.__dict__ for finding in findings],
-        "parse_failure_details": [failure.__dict__ for failure in parse_failures],
+        "findings": finding_rows,
+        "parse_failure_details": [{"diagnostic_id": "P101-WRAP-900", **failure.__dict__} for failure in parse_failures],
     }
     print(json.dumps(data, indent=2, sort_keys=True))
 
@@ -560,7 +770,7 @@ def print_fact(kind: str, path: Path, line: int, *fields: object) -> None:
     is_header = path.suffix in HEADER_SUFFIXES
     row = [
         "P101FACT",
-        "1",
+        "2",
         kind,
         str(path),
         module_name_for(path),
@@ -596,6 +806,23 @@ def source_line_facts(path: Path) -> Iterable[tuple[str, int, tuple[object, ...]
                 yield ("NOTE", line_number, ("ERROR_USE",))
             if re.search(r"\b(P101_ERROR_[A-Za-z0-9_]*|p101_error_has_[A-Za-z0-9_]*|p101_error_is_[A-Za-z0-9_]*|p101_error_reset)\s*\(", stripped):
                 yield ("NOTE", line_number, ("ERROR_CHECK",))
+            if "P101_ERROR_CONTRACT_ALLOW_NO_ERROR" in stripped:
+                yield ("NOTE", line_number, ("ERROR_OPTIONAL",))
+
+
+def load_allow_files(paths: list[Path]) -> list[AllowRule]:
+    rules: list[AllowRule] = []
+    for path in paths:
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+            value = line.split("#", 1)[0].strip()
+            if not value:
+                continue
+            fields = value.split(":")
+            if len(fields) != 3 or any(not field.strip() for field in fields):
+                raise ValueError(f"{path}:{line_number}: expected path:function:callee")
+            source_path, function, callee = (field.strip() for field in fields)
+            rules.append(AllowRule(path=source_path, function=function, callee=callee, source=str(path), line=line_number))
+    return rules
 
 
 def node_has_body(node: dict[str, Any]) -> bool:
@@ -683,7 +910,8 @@ def collect_module_facts(units_and_asts: list[tuple[TranslationUnit, dict[str, A
             if kind == "CallExpr":
                 name = call_name(node)
                 if name:
-                    fields = (name,)
+                    needs_env, needs_error = call_contract(node)
+                    fields = (name, bool_text(needs_env), bool_text(needs_error))
                     key = ("CALL", str(file_path), line, fields)
                     if key not in seen:
                         seen.add(key)
@@ -730,10 +958,90 @@ def print_module_facts(units: list[TranslationUnit], facts: list[tuple[str, Path
         print_fact(kind, path, line, *fields)
 
 
+def write_module_facts(path: Path, units: list[TranslationUnit], facts: list[tuple[str, Path, int, tuple[object, ...]]]) -> None:
+    with path.open("w", encoding="utf-8") as stream:
+        with contextlib.redirect_stdout(stream):
+            print_module_facts(units, facts)
+
+
+def sha256_file(path: Path | None) -> str | None:
+    if path is None:
+        return None
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def write_input_manifest(
+    path: Path,
+    requested_paths: list[Path],
+    compile_db_path: Path | None,
+    compile_db_only: bool,
+    clang: str,
+    facts_path: Path | None,
+    allow_files: list[Path],
+    allowed_callees: set[str],
+    active_units: list[TranslationUnit],
+    parsed_units: list[TranslationUnit],
+    parse_failures: list[ParseFailure],
+) -> None:
+    all_sources = {unit.source for unit in discover_sources(requested_paths, {}, False)}
+    all_headers = set(discover_headers(requested_paths))
+    active_sources = {unit.source for unit in active_units if unit.source.suffix in SOURCE_SUFFIXES}
+    parsed_sources = {unit.source for unit in parsed_units if unit.source.suffix in SOURCE_SUFFIXES}
+    parsed_headers = {unit.source for unit in parsed_units if unit.source.suffix in HEADER_SUFFIXES}
+    compiler_path = shutil.which(clang)
+    if compile_db_only:
+        selection_mode = "compile-database-only"
+    elif compile_db_path is not None:
+        selection_mode = "compile-database-plus-requested-paths"
+    else:
+        selection_mode = "requested-paths"
+    data = {
+        "schema": "p101-audit-inputs-v2",
+        "producer": "p101-wrapper-audit",
+        "compiler": str(Path(compiler_path).resolve()) if compiler_path is not None else clang,
+        "selection_mode": selection_mode,
+        "compile_database": str(compile_db_path.resolve()) if compile_db_path is not None else None,
+        "compile_database_sha256": sha256_file(compile_db_path),
+        "fact_snapshot": str(facts_path.resolve()) if facts_path is not None else None,
+        "fact_snapshot_sha256": sha256_file(facts_path) if facts_path is not None else None,
+        "allowed_callees": sorted(allowed_callees),
+        "boundary_rule_files": [
+            {"path": str(item.resolve()), "sha256": sha256_file(item)}
+            for item in sorted(allow_files, key=lambda value: str(value.resolve()))
+        ],
+        "requested_paths": [str(item.resolve()) for item in requested_paths],
+        "discovered_source_files": [str(item) for item in sorted(all_sources, key=str)],
+        "discovered_header_files": [str(item) for item in sorted(all_headers, key=str)],
+        "active_translation_units": [str(item) for item in sorted(active_sources, key=str)],
+        "inactive_source_files": [str(item) for item in sorted(all_sources - active_sources, key=str)],
+        "parsed_translation_units": [str(item) for item in sorted(parsed_sources, key=str)],
+        "parsed_headers": [str(item) for item in sorted(parsed_headers, key=str)],
+        "unparsed_active_translation_units": [str(item) for item in sorted(active_sources - parsed_sources, key=str)],
+        "parse_failures": [failure.__dict__ for failure in parse_failures],
+    }
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
     if args.timeout <= 0:
         print("p101-wrapper-audit: --timeout must be greater than zero", file=sys.stderr)
+        return 2
+    if args.compile_db_only and args.compile_db is None:
+        print("p101-wrapper-audit: --compile-db-only requires --compile-db", file=sys.stderr)
+        return 2
+    if args.emit_module_facts and args.facts_output is not None:
+        print("p101-wrapper-audit: --emit-module-facts and --facts-output are mutually exclusive", file=sys.stderr)
+        return 2
+    try:
+        allowed = set(args.allow)
+        allow_rules = load_allow_files(args.allow_file)
+    except (OSError, ValueError) as exc:
+        print(f"p101-wrapper-audit: could not read allow file: {exc}", file=sys.stderr)
         return 2
     paths = [Path(path).resolve() for path in args.paths]
     try:
@@ -759,13 +1067,15 @@ def main(argv: list[str]) -> int:
         print(f"p101-wrapper-audit: compile database does not exist: {args.compile_db}", file=sys.stderr)
         return 2
 
+    compile_db_path = args.compile_db or find_compile_db(paths)
     try:
-        compile_db = load_compile_db(args.compile_db or find_compile_db(paths))
+        compile_db = load_compile_db(compile_db_path)
     except json.JSONDecodeError as exc:
         print(f"p101-wrapper-audit: invalid compile database JSON: {exc}", file=sys.stderr)
         return 2
-    units = discover_sources(paths, compile_db)
-    if args.emit_module_facts:
+    units = discover_sources(paths, compile_db, args.compile_db_only)
+    active_units = list(units)
+    if (args.emit_module_facts or args.facts_output is not None) and not args.active_headers_only:
         existing = {unit.source for unit in units}
         units.extend(TranslationUnit(source=header, command=None, directory=header.parent) for header in discover_headers(paths) if header not in existing)
         units = sorted(units, key=lambda item: str(item.source))
@@ -782,9 +1092,10 @@ def main(argv: list[str]) -> int:
 
     units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]] = []
     parse_failures: list[ParseFailure] = []
+    header_cflags = header_compile_flags(compile_db, paths, args.cflag, args.header_root)
     for unit in units:
         try:
-            units_and_asts.append((unit, clang_ast(args.clang, unit, args.cflag, args.timeout)))
+            units_and_asts.append((unit, clang_ast(args.clang, unit, header_cflags, args.timeout)))
         except (OSError, RuntimeError, json.JSONDecodeError) as exc:
             message = str(exc)
             parse_failures.append(ParseFailure(path=str(unit.source), message=message))
@@ -805,8 +1116,34 @@ def main(argv: list[str]) -> int:
         print_module_facts(parsed_units, collect_module_facts(units_and_asts, paths))
         return 2 if parse_failures else 0
 
+    parsed_units = [unit for unit, _ in units_and_asts]
+    if args.facts_output is not None:
+        try:
+            write_module_facts(args.facts_output, parsed_units, collect_module_facts(units_and_asts, paths))
+        except OSError as exc:
+            print(f"p101-wrapper-audit: could not write facts: {exc}", file=sys.stderr)
+            return 2
+    if args.input_manifest is not None:
+        try:
+            write_input_manifest(args.input_manifest, paths, compile_db_path, args.compile_db_only, args.clang, args.facts_output, args.allow_file, allowed, active_units, parsed_units, parse_failures)
+        except OSError as exc:
+            print(f"p101-wrapper-audit: could not write input manifest: {exc}", file=sys.stderr)
+            return 2
+    if args.instrumentation_output is not None:
+        try:
+            write_instrumentation(args.instrumentation_output, collect_instrumentation(units_and_asts, paths))
+        except OSError as exc:
+            print(f"p101-wrapper-audit: could not write instrumentation coverage: {exc}", file=sys.stderr)
+            return 2
+
     local_functions = collect_local_functions(units_and_asts, paths)
-    findings = collect_findings(units_and_asts, paths, local_functions, inventory, set(args.allow))
+    findings = collect_findings(units_and_asts, paths, local_functions, inventory, allowed, allow_rules)
+
+    unused_rules = [rule for rule in allow_rules if not rule.used]
+    if unused_rules:
+        for rule in unused_rules:
+            print(f"p101-wrapper-audit: stale boundary rule {rule.source}:{rule.line}: {rule.path}:{rule.function}:{rule.callee}", file=sys.stderr)
+        return 2
 
     if args.json:
         print_json(findings, parse_failures)

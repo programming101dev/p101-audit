@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import tempfile
@@ -76,6 +77,22 @@ def test_bool_returning_local_function_is_not_external() -> None:
         assert "external-call: ready" not in result.stdout
 
 
+def test_compiler_builtins_are_not_external_boundaries() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        source.write_text(
+            """
+            int main(void) {
+                return __builtin_popcount(7U) == 3 ? 0 : 1;
+            }
+            """,
+            encoding="utf-8",
+        )
+        result = run_tool("--strict-external", str(source))
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "__builtin_popcount" not in result.stdout
+
+
 def test_json_output() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "main.c"
@@ -92,9 +109,11 @@ def test_json_output() -> None:
         result = run_tool("-j", str(source))
         assert result.returncode == 1, result.stderr + result.stdout
         data = json.loads(result.stdout)
+        assert data["schema"] == "p101-wrapper-audit-findings-v1"
         assert data["missed_wrappers"] >= 1
-        assert any(item["name"] == "printf" for item in data["findings"])
-        assert any("hint" in item for item in data["findings"])
+        assert any(item["evidence"]["callee"] == "printf" for item in data["findings"])
+        assert any(item["id"] == "P101-WRAP-001" for item in data["findings"])
+        assert all({"id", "severity", "location", "message", "evidence"} <= item.keys() for item in data["findings"])
 
 
 def test_inventory_json_output() -> None:
@@ -123,6 +142,182 @@ def test_compile_db_without_source_command_is_clear() -> None:
         result = run_tool("--compile-db", str(db), str(source))
         assert result.returncode == 2
         assert "compile database has no command" in result.stderr
+
+
+def test_compile_db_only_ignores_inactive_source() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        active = root / "active.c"
+        inactive = root / "inactive.c"
+        db = root / "compile_commands.json"
+        active.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+        inactive.write_text("this is intentionally not valid C\n", encoding="utf-8")
+        db.write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(root),
+                        "file": str(active),
+                        "arguments": ["clang", "-c", str(active)],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+        result = run_tool("--compile-db", str(db), "--compile-db-only", str(root))
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert str(inactive) not in result.stdout
+
+
+def test_compile_db_only_requires_compile_database() -> None:
+    result = run_tool("--compile-db-only", ".")
+    assert result.returncode == 2
+    assert "--compile-db-only requires --compile-db" in result.stderr
+
+
+def test_fact_snapshot_reuses_compile_database_includes_for_headers() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        include = root / "include"
+        src = root / "src"
+        include.mkdir()
+        src.mkdir()
+        public = include / "public.h"
+        detail = include / "detail.h"
+        source = src / "main.c"
+        database = root / "compile_commands.json"
+        facts = root / "facts.tsv"
+
+        detail.write_text("#define ANSWER 42\n", encoding="utf-8")
+        public.write_text('#include <detail.h>\nint answer(void);\n', encoding="utf-8")
+        source.write_text('#include <public.h>\nint answer(void) { return ANSWER; }\n', encoding="utf-8")
+        database.write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(root),
+                        "file": str(source),
+                        "arguments": ["clang", f"-I{include}", "-c", str(source)],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = run_tool("--compile-db", str(database), "--compile-db-only", "--facts-output", str(facts), str(src), str(include))
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert str(public.resolve()) in facts.read_text(encoding="utf-8")
+
+
+def test_active_headers_only_uses_translation_unit_language() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "main.cpp"
+        used = root / "used.hpp"
+        unrelated = root / "unrelated.h"
+        database = root / "compile_commands.json"
+        facts = root / "facts.tsv"
+
+        used.write_text("inline int answer() { return 42; }\n", encoding="utf-8")
+        unrelated.write_text("_Static_assert(sizeof(int) > 0, \"C-only header\");\n", encoding="utf-8")
+        source.write_text('#include "used.hpp"\nint main() { return answer() == 42 ? 0 : 1; }\n', encoding="utf-8")
+        database.write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(root),
+                        "file": str(source),
+                        "arguments": ["clang++", "-std=c++20", "-c", str(source)],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = run_tool(
+            "--compile-db",
+            str(database),
+            "--compile-db-only",
+            "--active-headers-only",
+            "--facts-output",
+            str(facts),
+            str(root),
+        )
+        assert result.returncode == 0, result.stderr + result.stdout
+        facts_text = facts.read_text(encoding="utf-8")
+        assert str(used.resolve()) in facts_text
+        assert str(unrelated.resolve()) not in facts_text
+
+
+def test_header_root_discovers_sibling_library_includes() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        libraries = root / "libraries"
+        first_include = libraries / "lib_first" / "include" / "p101_first"
+        second_include = libraries / "lib_second" / "include" / "p101_second"
+        source = root / "main.c"
+        database = root / "compile_commands.json"
+
+        first_include.mkdir(parents=True)
+        second_include.mkdir(parents=True)
+        (second_include / "second.h").write_text("int p101_second_value(void);\n", encoding="utf-8")
+        (first_include / "first.h").write_text(
+            "#include <p101_second/second.h>\nint p101_first_value(void);\n",
+            encoding="utf-8",
+        )
+        source.write_text(
+            "#include <p101_first/first.h>\nint main(void) { return p101_first_value(); }\n",
+            encoding="utf-8",
+        )
+        database.write_text(
+            json.dumps(
+                [
+                    {
+                        "directory": str(root),
+                        "file": str(source),
+                        "arguments": ["clang", "-c", str(source)],
+                    }
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = run_tool("--compile-db", str(database), "--header-root", str(libraries), str(source))
+        assert result.returncode == 0, result.stderr + result.stdout
+
+
+def test_allow_file_suppresses_named_boundary() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "main.c"
+        allow = root / "allow.txt"
+        source.write_text(
+            """
+            #include <stdlib.h>
+            int main(void) {
+                void *p = malloc(4);
+                free(p);
+                return 0;
+            }
+            """,
+            encoding="utf-8",
+        )
+        allow.write_text("# allocation boundary\nmain.c:main:malloc\nmain.c:main:free # owned here\n", encoding="utf-8")
+        result = run_tool("--allow-file", str(allow), str(source))
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "missed_wrappers: 0" in result.stdout
+
+
+def test_stale_allow_rule_fails() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "main.c"
+        allow = root / "allow.txt"
+        source.write_text("int main(void) { return 0; }\n", encoding="utf-8")
+        allow.write_text("main.c:main:malloc\n", encoding="utf-8")
+        result = run_tool("--allow-file", str(allow), str(source))
+        assert result.returncode == 2
+        assert "stale boundary rule" in result.stderr
 
 
 def test_timeout_must_be_positive() -> None:
@@ -234,12 +429,17 @@ def test_module_fact_output_uses_clang_ast_for_c_facts() -> None:
             #include <stdio.h>
             #include <p101_env/env.h>
             #include <p101_error/error.h>
+            #include <p101_posix/p101_unistd.h>
             static int helper(int value) { return value + 1; }
             static void traced(const struct p101_env *env, struct p101_error *err) {
                 P101_TRACE(env);
                 if(p101_error_has_error(err)) {
                     P101_ERROR_RAISE_USER(err, "bad", 1);
                 }
+            }
+            static int optional_probe(const struct p101_env *env) {
+                /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: failure means absent. */
+                return p101_access(env, NULL, "missing", 0);
             }
             int thing_run(int value) {
                 return printf("%d\\n", helper(value));
@@ -253,17 +453,42 @@ def test_module_fact_output_uses_clang_ast_for_c_facts() -> None:
         assert "\tthing_run\t0\t0" in result.stdout
         assert "\thelper\t1\t0" in result.stdout
         assert "\tCALL\t" in result.stdout
+        assert result.stdout.startswith("P101FACT\t2\t")
         assert "\tprintf" in result.stdout
         assert "\thelper" in result.stdout
         assert "\tENV_CONTRACT" in result.stdout
         assert "\tERROR_CONTRACT" in result.stdout
         assert "\tTRACE_USE" in result.stdout
         assert "\tERROR_CHECK" in result.stdout
+        assert "\tERROR_OPTIONAL" in result.stdout
         assert "\tTYPE\t" in result.stdout
         assert "\tthing_callback" in result.stdout
         assert "\tthing_state" in result.stdout
         assert "\tMACRO\t" in result.stdout
         assert "\tTHING_LIMIT" in result.stdout
+
+
+def test_reusable_fact_snapshot_and_input_manifest() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "main.c"
+        facts = root / "facts.tsv"
+        manifest = root / "inputs.json"
+        allow = root / "allow.txt"
+        source.write_text("extern int puts(const char *text);\nint f(void) { return puts(\"hello\"); }\n", encoding="utf-8")
+        allow.write_text("main.c:f:puts\n", encoding="utf-8")
+        result = run_tool("--allow-file", str(allow), "--allow", "vendor_call", "--facts-output", str(facts), "--input-manifest", str(manifest), str(source))
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "P101FACT\t2\t" in facts.read_text(encoding="utf-8")
+        assert "\tputs\t0\t0" in facts.read_text(encoding="utf-8")
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        assert data["schema"] == "p101-audit-inputs-v2"
+        assert str(source.resolve()) in data["active_translation_units"]
+        assert str(source.resolve()) in data["parsed_translation_units"]
+        assert data["fact_snapshot_sha256"]
+        assert data["allowed_callees"] == ["vendor_call"]
+        assert data["boundary_rule_files"] == [{"path": str(allow.resolve()), "sha256": hashlib.sha256(allow.read_bytes()).hexdigest()}]
+        assert data["parse_failures"] == []
 
 
 def test_module_facts_include_bool_returning_definitions() -> None:
@@ -341,15 +566,24 @@ def main() -> int:
         test_missed_wrapper_and_local_function,
         test_external_inventory_does_not_fail_by_default,
         test_bool_returning_local_function_is_not_external,
+        test_compiler_builtins_are_not_external_boundaries,
         test_json_output,
         test_inventory_json_output,
         test_missing_compile_db_is_clear,
         test_compile_db_without_source_command_is_clear,
+        test_compile_db_only_ignores_inactive_source,
+        test_compile_db_only_requires_compile_database,
+        test_fact_snapshot_reuses_compile_database_includes_for_headers,
+        test_active_headers_only_uses_translation_unit_language,
+        test_header_root_discovers_sibling_library_includes,
+        test_allow_file_suppresses_named_boundary,
+        test_stale_allow_rule_fails,
         test_timeout_must_be_positive,
         test_keep_going_reports_partial_results_and_parse_failures,
         test_static_inline_header_calls_are_audited_at_header_location,
         test_indirect_function_pointer_calls_are_reported_as_boundaries,
         test_module_fact_output_uses_clang_ast_for_c_facts,
+        test_reusable_fact_snapshot_and_input_manifest,
         test_module_facts_include_bool_returning_definitions,
         test_module_facts_parse_cxx_headers_as_cxx,
     ]

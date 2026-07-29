@@ -29,6 +29,18 @@ Options:
 - `-e`, `--strict-external` makes unmapped external and indirect calls fail too.
 - `-a NAME`, `--allow NAME` allows an external callee name.
 - `--compile-db compile_commands.json` uses a specific compile database.
+- `--compile-db-only` audits only active translation units in that database.
+- `--active-headers-only` derives header facts from those active translation
+  units instead of parsing every header as an independent translation unit.
+  Workspace-wide consumer audits use this mode so a C++ header is interpreted
+  under the C++ command that actually includes it.
+  This is useful for portable projects that retain platform-specific source
+  files which are intentionally not built on the current host.
+- `--allow-file FILE` reads intentional boundary rules in
+  `path:function:callee` form. `*` may stand for the path or function, blank
+  lines and `#` comments are ignored, and an unused rule is tool trouble. Keep
+  this file in the audited repo so every exception remains scoped and stale
+  exceptions are removed.
 - `--cflag FLAG` adds a compiler flag for files not present in a compile
   database; may be repeated.
 - `--clang clang-22` uses a specific Clang.
@@ -42,6 +54,12 @@ Options:
 - `--emit-module-facts` emits the Clang-derived TSV fact stream parsed by
   `lib_c_facts` and consumed by `p101-module-map`; see
   [docs/module-facts.md](docs/module-facts.md).
+- `--facts-output FILE` writes the same P101FACT v2 snapshot while the wrapper
+  audit runs, so later policy tools reuse the exact AST evidence.
+- `--input-manifest FILE` writes a JSON receipt containing the compiler,
+  compile-database and fact hashes, discovered/active/parsed files, inactive
+  sources, parse failures, allowed callees, and hashes of scoped boundary-rule
+  files.
 
 Examples:
 
@@ -51,6 +69,7 @@ Examples:
 ./p101-wrapper-audit --cflag=-Iinclude src
 ./p101-wrapper-audit --keep-going --timeout 60 --cflag=-Iinclude src
 ./p101-wrapper-audit --emit-module-facts --cflag=-Iinclude src include
+./p101-wrapper-audit --facts-output facts.tsv --input-manifest inputs.json src include
 ./p101-wrapper-audit -e -a TEST_ASSERT_EQUAL_INT test src
 ```
 
@@ -94,3 +113,8 @@ their code follows the wrapper contract. Pair it with `p101-observe`,
 With `--keep-going`, parser trouble is reported alongside any findings found in
 the translation units that did parse. The exit status remains `2` when any unit
 was skipped, because the report is intentionally partial.
+
+JSON findings use the common envelope keys `id`, `severity`, `location`,
+`message`, and `evidence`. Wrapper IDs are `P101-WRAP-001` (available wrapper
+bypassed), `P101-WRAP-002` (external call), and `P101-WRAP-003` (indirect
+call). Parser trouble is `P101-WRAP-900`.
