@@ -60,6 +60,10 @@ Options:
   compile-database and fact hashes, discovered/active/parsed files, inactive
   sources, parse failures, allowed callees, and hashes of scoped boundary-rule
   files.
+- `--check-portability-includes` rejects known OS-specific headers such as
+  `linux/*`, `mach/*`, and `sys/event.h`. This source-boundary policy lives
+  here rather than in the structural module mapper because it is a judgment
+  about the headers admitted at the portable wrapper boundary.
 - `--wrapper-form-contract FILE` checks selected definitions against a
   project-owned structural wrapper contract.
 - `--wrapper-form-only` skips the p101 boundary inventory and emits only the
@@ -76,6 +80,7 @@ Examples:
 ./p101-wrapper-audit --keep-going --timeout 60 --cflag=-Iinclude src
 ./p101-wrapper-audit --emit-module-facts --cflag=-Iinclude src include
 ./p101-wrapper-audit --facts-output facts.tsv --input-manifest inputs.json src include
+./p101-wrapper-audit --check-portability-includes --compile-db build/compile_commands.json .
 ./p101-wrapper-audit --wrapper-form-contract wrapper-form-contract.json --wrapper-form-only \
   --compile-db build/compile_commands.json --compile-db-only .
 ./p101-wrapper-audit -e -a TEST_ASSERT_EQUAL_INT test src
@@ -84,6 +89,19 @@ Examples:
 The wrapper inventory is part of the trust boundary. A normal audit fails as a
 setup error if no p101 wrappers can be inventoried, because an empty inventory
 would otherwise make direct calls look harmless.
+
+## Fact-production boundary
+
+`p101-c-facts` is the dedicated fact-producing command in this repository. It
+accepts the same source-discovery, compile-database, Clang, timeout, and
+keep-going options and emits only the `P101FACT` stream. It is a deliberately
+thin front end over the same Clang acquisition pipeline, so consumers do not
+need to pretend that wrapper policy owns C parsing.
+
+`p101-wrapper-audit` remains able to write a fact snapshot during its policy
+pass with `--facts-output`; `p101-doctor` uses that path to avoid parsing every
+translation unit twice. The split is one of responsibility and interface, not
+duplicated parsing code.
 
 ## Trust boundary and blind spots
 

@@ -169,6 +169,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--input-manifest", type=Path, metavar="FILE", help="write the admitted-input manifest as JSON")
     parser.add_argument("--instrumentation-output", type=Path, metavar="FILE", help="write per-function tracing, fault, and resource instrumentation coverage as JSON")
     parser.add_argument("--mutation-candidates-output", type=Path, metavar="FILE", help="write safe Clang-located mutation candidates as JSON")
+    parser.add_argument("--check-portability-includes", action="store_true", help="reject known platform-specific headers in the admitted project sources")
     parser.add_argument("--wrapper-form-contract", type=Path, metavar="FILE", help="check wrapper function form against a project-neutral JSON contract")
     parser.add_argument("--wrapper-form-only", action="store_true", help="run only the wrapper-form contract check")
     return parser.parse_args(argv)
@@ -1382,6 +1383,7 @@ def diagnostic_id_for_kind(kind: str) -> str:
         "missed-wrapper": "P101-WRAP-001",
         "external-call": "P101-WRAP-002",
         "indirect-call": "P101-WRAP-003",
+        "portability-include": "P101-WRAP-004",
     }.get(kind, "P101-WRAP-000")
 
 
@@ -1391,6 +1393,42 @@ def replacement_hint(name: str, replacement: str, is_indirect: bool = False) -> 
     if is_indirect:
         return f"indirect/non-p101 call through {name}; wrapper-audit cannot prove the runtime target, so keep this at a documented boundary"
     return "external/non-p101 call; allow it explicitly, wrap it, or keep it at a documented boundary"
+
+
+def collect_portability_include_findings(
+    preprocessing_facts: list[tuple[str, Path, int, tuple[object, ...]]],
+) -> list[Finding]:
+    exact_headers = {"sys/event.h", "sys/kqueue.h", "sys/sysctl.h"}
+    platform_prefixes = ("linux/", "mach/", "windows/")
+    findings: list[Finding] = []
+    seen: set[tuple[str, int, str]] = set()
+
+    for kind, path, line, fields in preprocessing_facts:
+        if kind != "INCLUDE" or not fields:
+            continue
+        header = str(fields[0])
+        if header not in exact_headers and not header.startswith(platform_prefixes):
+            continue
+        key = (str(path), line, header)
+        if key in seen:
+            continue
+        seen.add(key)
+        findings.append(
+            Finding(
+                diagnostic_id="P101-WRAP-004",
+                path=str(path),
+                line=line,
+                column=1,
+                name=header,
+                caller="translation-unit",
+                kind="portability-include",
+                replacement="",
+                category="portability",
+                hint="isolate this platform header behind a portable p101 boundary or a deliberately platform-specific module",
+            )
+        )
+
+    return sorted(findings, key=lambda item: (item.path, item.line, item.name))
 
 
 def print_inventory(inventory: dict[str, str]) -> None:
@@ -1411,10 +1449,12 @@ def print_text(findings: list[Finding], parse_failures: list[ParseFailure] | Non
     missed = sum(1 for finding in findings if finding.kind == "missed-wrapper")
     external = sum(1 for finding in findings if finding.kind == "external-call")
     indirect = sum(1 for finding in findings if finding.kind == "indirect-call")
+    portability = sum(1 for finding in findings if finding.kind == "portability-include")
     print("p101-wrapper-audit summary")
     print(f"missed_wrappers: {missed}")
     print(f"external_calls: {external}")
     print(f"indirect_calls: {indirect}")
+    print(f"portability_includes: {portability}")
     print(f"parse_failures: {len(parse_failures)}")
     for failure in parse_failures:
         print(f"{failure.path}: P101-WRAP-900: parse-failure")
@@ -1427,6 +1467,9 @@ def print_text(findings: list[Finding], parse_failures: list[ParseFailure] | Non
         elif finding.kind == "indirect-call":
             print(f"{location}: {finding.diagnostic_id}: indirect-call: {finding.name} [{finding.caller}]")
             print(f"  hint: {finding.hint}")
+        elif finding.kind == "portability-include":
+            print(f"{location}: {finding.diagnostic_id}: portability-include: {finding.name}")
+            print(f"  hint: {finding.hint}")
         else:
             print(f"{location}: {finding.diagnostic_id}: external-call: {finding.name} [{finding.caller}]")
             print(f"  hint: {finding.hint}")
@@ -1438,7 +1481,7 @@ def print_json(findings: list[Finding], parse_failures: list[ParseFailure] | Non
     for finding in findings:
         row = {
             "id": finding.diagnostic_id,
-            "severity": "error" if finding.kind == "missed-wrapper" else "note",
+            "severity": "error" if finding.kind in {"missed-wrapper", "portability-include"} else "note",
             "location": {"path": finding.path, "line": finding.line, "column": finding.column, "function": finding.caller},
             "message": finding.hint,
             "evidence": {
@@ -1455,6 +1498,7 @@ def print_json(findings: list[Finding], parse_failures: list[ParseFailure] | Non
         "missed_wrappers": sum(1 for finding in findings if finding.kind == "missed-wrapper"),
         "external_calls": sum(1 for finding in findings if finding.kind == "external-call"),
         "indirect_calls": sum(1 for finding in findings if finding.kind == "indirect-call"),
+        "portability_includes": sum(1 for finding in findings if finding.kind == "portability-include"),
         "parse_failures": len(parse_failures),
         "findings": finding_rows,
         "parse_failure_details": [{"diagnostic_id": "P101-WRAP-900", **failure.__dict__} for failure in parse_failures],
@@ -1888,7 +1932,7 @@ def main(argv: list[str]) -> int:
         try:
             extra_flags = source_cflags if unit.command is not None else header_cflags
             units_and_asts.append((unit, clang_ast(args.clang, unit, extra_flags, args.timeout)))
-            if args.emit_module_facts or args.facts_output is not None:
+            if args.emit_module_facts or args.facts_output is not None or args.check_portability_includes:
                 preprocessing_facts.extend(clang_preprocessor_facts(args.clang, unit, extra_flags, paths, args.timeout))
         except (OSError, RuntimeError, json.JSONDecodeError) as exc:
             message = str(exc)
@@ -1946,6 +1990,9 @@ def main(argv: list[str]) -> int:
 
     local_functions = collect_local_functions(units_and_asts, paths)
     findings = collect_findings(units_and_asts, paths, local_functions, inventory, allowed, allow_rules)
+    if args.check_portability_includes:
+        findings.extend(collect_portability_include_findings(preprocessing_facts))
+        findings.sort(key=lambda item: (item.path, item.line, item.column, item.name))
 
     unused_rules = [rule for rule in allow_rules if not rule.used]
     if unused_rules:
@@ -1963,13 +2010,14 @@ def main(argv: list[str]) -> int:
     missed = any(finding.kind == "missed-wrapper" for finding in findings)
     external = any(finding.kind == "external-call" for finding in findings)
     indirect = any(finding.kind == "indirect-call" for finding in findings)
+    portability = any(finding.kind == "portability-include" for finding in findings)
     if parse_failures:
         return 2
     if form_trouble:
         return 2
     if form_findings:
         return 1
-    if missed or (args.strict_external and (external or indirect)):
+    if missed or portability or (args.strict_external and (external or indirect)):
         return 1
     return 0
 

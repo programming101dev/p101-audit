@@ -12,6 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "p101-wrapper-audit"
+FACT_TOOL = ROOT / "p101-c-facts"
 
 
 def run_tool(*args: str) -> subprocess.CompletedProcess[str]:
@@ -978,6 +979,34 @@ def test_generic_wrapper_form_contract_checks_shape_and_native_signature() -> No
         assert any(finding["id"] == "P101-WFORM-004" for finding in data["findings"])
 
 
+def test_portability_include_rule_pack() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "main.c"
+        platform_include = root / "platform" / "linux"
+        platform_include.mkdir(parents=True)
+        (platform_include / "teaching_only.h").write_text("#define TEACHING_ONLY 1\n", encoding="utf-8")
+        source.write_text("#include <linux/teaching_only.h>\nint main(void) { return TEACHING_ONLY - 1; }\n", encoding="utf-8")
+
+        default = run_tool(f"--cflag=-I{root / 'platform'}", str(source))
+        assert default.returncode == 0, default.stderr + default.stdout
+
+        checked = run_tool("--check-portability-includes", f"--cflag=-I{root / 'platform'}", str(source))
+        assert checked.returncode == 1, checked.stderr + checked.stdout
+        assert "P101-WRAP-004" in checked.stdout
+        assert "linux/teaching_only.h" in checked.stdout
+
+
+def test_dedicated_fact_command() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        source.write_text("static int answer(void) { return 42; }\n", encoding="utf-8")
+        result = subprocess.run([str(FACT_TOOL), str(source)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert result.stdout.startswith("P101FACT\t2\t")
+        assert "\tFUNCTION\t" in result.stdout
+
+
 def main() -> int:
     tests = [
         test_missed_wrapper_and_local_function,
@@ -1019,6 +1048,8 @@ def main() -> int:
         test_error_flow_checks_the_matching_error_object,
         test_multiline_optional_error_annotation_uses_call_start_line,
         test_generic_wrapper_form_contract_checks_shape_and_native_signature,
+        test_portability_include_rule_pack,
+        test_dedicated_fact_command,
     ]
     for test in tests:
         test()

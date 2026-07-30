@@ -408,6 +408,16 @@ def test_mutation_and_finding_edge_paths() -> None:
             "referencedDecl": {"name": "outside", "kind": "FunctionDecl"},
         }
         assert tool.collect_findings([(unit, {"inner": [allowed_call, outside_call]})], [root], set(), {}, {"allowed"}, []) == []
+        portability_facts = [
+            ("MACRO", source, 1, ("IGNORED",)),
+            ("INCLUDE", source, 1, ()),
+            ("INCLUDE", source, 2, ("stdio.h", "false")),
+            ("INCLUDE", source, 3, ("sys/event.h", "false")),
+            ("INCLUDE", source, 3, ("sys/event.h", "false")),
+        ]
+        portability = tool.collect_portability_include_findings(portability_facts)
+        assert len(portability) == 1
+        assert portability[0].diagnostic_id == "P101-WRAP-004"
 
 
 def test_small_helpers_and_flow() -> None:
