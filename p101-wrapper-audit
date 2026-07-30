@@ -52,6 +52,27 @@ CONTROL_CALLEES = {
     "__errno_location",
     "__error",
 }
+FORTIFIED_CALLEES = {
+    "__builtin___fprintf_chk": "fprintf",
+    "__builtin___memcpy_chk": "memcpy",
+    "__builtin___memmove_chk": "memmove",
+    "__builtin___memset_chk": "memset",
+    "__builtin___printf_chk": "printf",
+    "__builtin___snprintf_chk": "snprintf",
+    "__builtin___sprintf_chk": "sprintf",
+    "__builtin___stpcpy_chk": "stpcpy",
+    "__builtin___strcat_chk": "strcat",
+    "__builtin___strcpy_chk": "strcpy",
+    "__builtin___strncat_chk": "strncat",
+    "__builtin___strncpy_chk": "strncpy",
+    "__builtin___vfprintf_chk": "vfprintf",
+    "__builtin___vprintf_chk": "vprintf",
+    "__builtin___vsnprintf_chk": "vsnprintf",
+    "__builtin___vsprintf_chk": "vsprintf",
+    "__builtin_memcpy": "memcpy",
+    "__builtin_memmove": "memmove",
+    "__builtin_memset": "memset",
+}
 DEFAULT_HEADER_ROOTS = [
     Path(__file__).resolve().parents[2] / "libraries",
     Path("/usr/local/include"),
@@ -85,6 +106,17 @@ class Finding:
 class ParseFailure:
     path: str
     message: str
+
+
+@dataclass(frozen=True)
+class MutationCandidate:
+    operator: str
+    path: str
+    line: int
+    start: int
+    end: int
+    original: str
+    replacement: str
 
 
 @dataclass
@@ -124,6 +156,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--input-manifest", type=Path, metavar="FILE", help="write the admitted-input manifest as JSON")
     parser.add_argument("--instrumentation-output", type=Path, metavar="FILE", help="write per-function tracing, fault, and resource instrumentation coverage as JSON")
+    parser.add_argument("--mutation-candidates-output", type=Path, metavar="FILE", help="write safe Clang-located mutation candidates as JSON")
     return parser.parse_args(argv)
 
 
@@ -318,7 +351,28 @@ def wrapper_inventory(header_roots: list[Path]) -> dict[str, str]:
 
 
 def add_atomic_aliases(inventory: dict[str, str]) -> None:
-    for base in ("load", "store", "fetch_add", "fetch_sub"):
+    for base in (
+        "compare_exchange_strong",
+        "compare_exchange_strong_explicit",
+        "compare_exchange_weak",
+        "compare_exchange_weak_explicit",
+        "exchange",
+        "exchange_explicit",
+        "fetch_add",
+        "fetch_add_explicit",
+        "fetch_and",
+        "fetch_and_explicit",
+        "fetch_or",
+        "fetch_or_explicit",
+        "fetch_sub",
+        "fetch_sub_explicit",
+        "fetch_xor",
+        "fetch_xor_explicit",
+        "load",
+        "load_explicit",
+        "store",
+        "store_explicit",
+    ):
         wrapper = inventory.get(f"atomic_uint_{base}")
         if wrapper:
             inventory.setdefault(f"atomic_{base}", wrapper)
@@ -339,6 +393,54 @@ def clang_ast(command: str, tu: TranslationUnit, extra_cflags: list[str], timeou
     if proc.returncode != 0:
         raise RuntimeError(f"clang failed for {tu.source}:\n{proc.stderr}")
     return json.loads(proc.stdout)
+
+
+def clang_preprocessor_facts(command: str, tu: TranslationUnit, extra_cflags: list[str], roots: list[Path], timeout: float) -> list[tuple[str, Path, int, tuple[object, ...]]]:
+    if tu.command:
+        preprocess_command = ast_command_from_compile_command(command, tu, extra_cflags)
+        preprocess_command = [value for value in preprocess_command if value not in {"-fsyntax-only", "-Xclang", "-ast-dump=json"}]
+        preprocess_command.extend(["-E", "-dI", "-dD"])
+    else:
+        language = language_for(tu.source)
+        standard = "c++17" if "c++" in language else "c17"
+        preprocess_command = [command, "-x", language, f"-std={standard}", *extra_cflags, "-E", "-dI", "-dD", str(tu.source)]
+    try:
+        proc = subprocess.run(preprocess_command, cwd=str(tu.directory or tu.source.parent), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(f"clang preprocessor timed out after {timeout:g}s for {tu.source}") from exc
+    if proc.returncode != 0:
+        raise RuntimeError(f"clang preprocessing failed for {tu.source}:\n{proc.stderr}")
+
+    facts: list[tuple[str, Path, int, tuple[object, ...]]] = []
+    current_path: Path | None = None
+    current_line = 1
+    marker_pattern = re.compile(r'^#\s+(\d+)\s+"([^"]+)"')
+    include_pattern = re.compile(r'^#include\s*([<"])([^>"]+)[>"]')
+    macro_pattern = re.compile(r"^#define\s+([A-Za-z_][A-Za-z0-9_]*)")
+    for output_line in proc.stdout.splitlines():
+        marker = marker_pattern.match(output_line)
+        if marker:
+            marker_text = marker.group(2)
+            if marker_text.startswith("<") and marker_text.endswith(">"):
+                current_path = None
+                current_line = int(marker.group(1))
+                continue
+            marker_path = Path(marker_text)
+            current_path = marker_path.resolve() if marker_path.is_absolute() else (tu.directory / marker_path).resolve()
+            current_line = int(marker.group(1))
+            continue
+        if current_path is None or not is_under(current_path, roots):
+            continue
+        include = include_pattern.match(output_line)
+        if include:
+            facts.append(("INCLUDE", current_path, current_line, (include.group(2), bool_text(include.group(1) == '"'))))
+        macro = macro_pattern.match(output_line)
+        if macro:
+            name = macro.group(1)
+            if not (len(name) > 2 and name.endswith("_H")):
+                facts.append(("MACRO", current_path, current_line, (name,)))
+        current_line += 1
+    return facts
 
 
 def ast_command_from_compile_command(command: str, tu: TranslationUnit, extra_cflags: list[str]) -> list[str]:
@@ -445,6 +547,26 @@ def node_offset(node: dict[str, Any]) -> int | None:
     return offset if isinstance(offset, int) else None
 
 
+def range_location(value: dict[str, Any]) -> dict[str, Any]:
+    if "expansionLoc" in value:
+        return value["expansionLoc"]
+    if "spellingLoc" in value:
+        return value["spellingLoc"]
+    return value
+
+
+def node_range_offsets(node: dict[str, Any]) -> tuple[int, int] | None:
+    node_range = node.get("range", {}) or {}
+    begin = range_location(node_range.get("begin", {}) or {})
+    end = range_location(node_range.get("end", {}) or {})
+    start = begin.get("offset")
+    finish = end.get("offset")
+    token_length = end.get("tokLen", 1)
+    if not isinstance(start, int) or not isinstance(finish, int) or not isinstance(token_length, int):
+        return None
+    return start, finish + token_length
+
+
 def spelling_location_with_ancestors(node: dict[str, Any], ancestors: tuple[dict[str, Any], ...], default_file: Path | None = None, source_bytes: bytes | None = None, allow_default_file: bool = True) -> tuple[Path | None, int, int]:
     file_path, line, column = spelling_location(node, default_file, source_bytes, allow_default_file)
     if file_path is not None:
@@ -491,6 +613,8 @@ def collect_local_functions(units_and_asts: list[tuple[TranslationUnit, dict[str
                 continue
             if not node_has_body(node):
                 continue
+            if node.get("storageClass") == "static":
+                continue
             name = node.get("name")
             if not name:
                 continue
@@ -503,6 +627,8 @@ def collect_local_functions(units_and_asts: list[tuple[TranslationUnit, dict[str
 def collect_instrumentation(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]], roots: list[Path]) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     seen: set[tuple[str, str, int]] = set()
+    function_calls: dict[tuple[str, str], set[str | None]] = {}
+    function_capabilities: dict[tuple[str, str], dict[str, bool]] = {}
     capability_calls = {
         "trace_entry": {"p101_env_trace"},
         "trace_exit": {"p101_env_trace_exit"},
@@ -518,8 +644,6 @@ def collect_instrumentation(units_and_asts: list[tuple[TranslationUnit, dict[str
             if node.get("kind") != "FunctionDecl" or not node_has_body(node):
                 continue
             name = str(node.get("name", ""))
-            if not name.startswith("p101_"):
-                continue
             file_path, line, _ = spelling_location(node, unit.source, source_bytes)
             if file_path is None or not is_under(file_path, roots):
                 continue
@@ -528,6 +652,13 @@ def collect_instrumentation(units_and_asts: list[tuple[TranslationUnit, dict[str
                 continue
             seen.add(key)
             calls = {call_name(child) for child in iter_nodes(node) if child.get("kind") == "CallExpr"}
+            function_key = (str(file_path), name)
+            function_calls.setdefault(function_key, set()).update(calls)
+            capabilities = function_capabilities.setdefault(function_key, {capability: False for capability in capability_calls})
+            for capability, names in capability_calls.items():
+                capabilities[capability] = capabilities[capability] or bool(calls & names)
+            if not name.startswith("p101_"):
+                continue
             record: dict[str, Any] = {
                 "path": str(file_path),
                 "line": line,
@@ -535,9 +666,26 @@ def collect_instrumentation(units_and_asts: list[tuple[TranslationUnit, dict[str
                 "has_env": function_has_parameter_type(node, "p101_env"),
                 "has_error": function_has_parameter_type(node, "p101_error"),
             }
-            for capability, names in capability_calls.items():
-                record[capability] = bool(calls & names)
             records.append(record)
+
+    changed = True
+    while changed:
+        changed = False
+        for function_key, calls in function_calls.items():
+            capabilities = function_capabilities[function_key]
+            for callee in calls:
+                helper = function_capabilities.get((function_key[0], str(callee)))
+                if helper is None:
+                    continue
+                for capability in capability_calls:
+                    if helper[capability] and not capabilities[capability]:
+                        capabilities[capability] = True
+                        changed = True
+
+    for record in records:
+        capabilities = function_capabilities[(record["path"], record["function"])]
+        for capability in capability_calls:
+            record[capability] = capabilities[capability]
     return sorted(records, key=lambda item: (item["path"], item["line"], item["function"]))
 
 
@@ -550,12 +698,78 @@ def write_instrumentation(path: Path, records: list[dict[str, Any]]) -> None:
     path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
+def collect_mutation_candidates(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]], roots: list[Path]) -> list[MutationCandidate]:
+    comparison_replacements = {"==": "!=", "!=": "==", "<": "<=", "<=": "<", ">": ">=", ">=": ">"}
+    predicate_replacements = {"p101_error_has_error": "p101_error_has_no_error", "p101_error_has_no_error": "p101_error_has_error"}
+    cleanup_calls = {"p101_close", "p101_fclose", "p101_free"}
+    candidates: list[MutationCandidate] = []
+    seen: set[tuple[str, int, int, str]] = set()
+
+    for unit, ast in units_and_asts:
+        source = unit.source.read_bytes()
+        for node, ancestors in iter_nodes_with_ancestors(ast):
+            kind = node.get("kind")
+            if kind not in {"BinaryOperator", "CallExpr"}:
+                continue
+            file_path, line, _ = spelling_location_with_ancestors(node, ancestors, unit.source, source)
+            if file_path != unit.source or not is_under(file_path, roots):
+                continue
+            offsets = node_range_offsets(node)
+            if offsets is None:
+                continue
+            start, end = offsets
+            if start < 0 or end > len(source) or start >= end:
+                continue
+
+            candidate: MutationCandidate | None = None
+            if kind == "BinaryOperator" and str(node.get("opcode", "")) in comparison_replacements:
+                children = [child for child in node.get("inner", []) or [] if isinstance(child, dict)]
+                if len(children) >= 2:
+                    left_range = node_range_offsets(children[0])
+                    right_range = node_range_offsets(children[1])
+                    if left_range is not None and right_range is not None:
+                        between_start = left_range[1]
+                        between_end = right_range[0]
+                        opcode = str(node["opcode"])
+                        position = source.find(opcode.encode(), between_start, between_end)
+                        if position >= 0:
+                            candidate = MutationCandidate("comparison-boundary", str(file_path), line, position, position + len(opcode), opcode, comparison_replacements[opcode])
+            elif kind == "CallExpr":
+                name = call_name(node)
+                if name in predicate_replacements:
+                    position = source.find(str(name).encode(), start, end)
+                    if position >= 0:
+                        candidate = MutationCandidate("error-predicate", str(file_path), line, position, position + len(str(name)), str(name), predicate_replacements[str(name)])
+                elif name in cleanup_calls and ancestors and ancestors[-1].get("kind") == "CompoundStmt":
+                    original = source[start:end].decode("utf-8", errors="strict")
+                    candidate = MutationCandidate("skip-cleanup", str(file_path), line, start, end, original, "(void)0")
+
+            if candidate is not None:
+                key = (candidate.path, candidate.start, candidate.end, candidate.replacement)
+                if key not in seen:
+                    seen.add(key)
+                    candidates.append(candidate)
+
+    return sorted(candidates, key=lambda item: (item.path, item.start, item.operator, item.replacement))
+
+
+def write_mutation_candidates(path: Path, candidates: list[MutationCandidate]) -> None:
+    data = {
+        "schema": "p101-mutation-candidates-v1",
+        "producer": "p101-wrapper-audit",
+        "candidates": [candidate.__dict__ for candidate in candidates],
+    }
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
 def call_name(node: dict[str, Any]) -> str | None:
     name, _ = call_target(node)
     return name
 
 
 def call_target(node: dict[str, Any]) -> tuple[str | None, str | None]:
+    if node.get("kind") == "AtomicExpr" and node.get("name"):
+        return str(node["name"]), "FunctionDecl"
     referenced = node.get("referencedDecl")
     if isinstance(referenced, dict) and referenced.get("name"):
         return str(referenced["name"]), str(referenced.get("kind", ""))
@@ -563,6 +777,13 @@ def call_target(node: dict[str, Any]) -> tuple[str | None, str | None]:
     if inner and isinstance(inner[0], dict):
         return declref_info(inner[0])
     return None, None
+
+
+def canonical_callee_name(name: str) -> str:
+    """Map compiler-lowered libc calls back to their source-level boundary."""
+    if name.startswith("__c11_atomic_"):
+        return f"atomic_{name.removeprefix('__c11_atomic_')}"
+    return FORTIFIED_CALLEES.get(name, name)
 
 
 def call_contract(node: dict[str, Any]) -> tuple[bool, bool]:
@@ -576,8 +797,28 @@ def call_contract(node: dict[str, Any]) -> tuple[bool, bool]:
             continue
         signature = str(type_info.get("qualType", ""))
         if signature:
-            return "p101_env" in signature, "p101_error" in signature
+            parameters = signature.split("(", 1)[1] if "(" in signature else signature
+            needs_env = re.search(r"\bstruct\s+p101_env\s*\*", parameters) is not None
+            needs_error = re.search(r"\bstruct\s+p101_error\s*\*", parameters) is not None
+            return needs_env, needs_error
     return False, False
+
+
+def node_is_null_pointer(node: dict[str, Any]) -> bool:
+    """Recognize a source null pointer after Clang's implicit AST wrapping."""
+    if node.get("kind") in {"GNUNullExpr", "CXXNullPtrLiteralExpr"}:
+        return True
+    if node.get("kind") == "IntegerLiteral" and str(node.get("value", "")) == "0":
+        return True
+    children = [child for child in node.get("inner", []) or [] if isinstance(child, dict)]
+    return len(children) == 1 and node_is_null_pointer(children[0])
+
+
+def call_discards_error(node: dict[str, Any]) -> bool:
+    """p101 APIs consistently place the error object after the environment."""
+    needs_env, needs_error = call_contract(node)
+    children = [child for child in node.get("inner", []) or [] if isinstance(child, dict)]
+    return needs_env and needs_error and len(children) >= 3 and node_is_null_pointer(children[2])
 
 
 def declref_name(node: dict[str, Any]) -> str | None:
@@ -597,6 +838,51 @@ def declref_info(node: dict[str, Any]) -> tuple[str | None, str | None]:
             if name:
                 return name, kind
     return None, None
+
+
+def local_function_pointer_targets(ast: dict[str, Any]) -> dict[tuple[str, str], set[str]]:
+    """Collect direct function targets assigned within one function.
+
+    A pointer is resolved only when every observed initializer or assignment
+    names the same concrete function. Aliases, parameters, fields, returned
+    values, and pointers with competing targets remain explicit boundaries.
+    """
+    targets: dict[tuple[str, str], set[str]] = {}
+    for node, ancestors in iter_nodes_with_ancestors(ast):
+        if node.get("kind") != "VarDecl" or not node.get("name"):
+            continue
+        caller = enclosing_function_name(ancestors)
+        if caller is None:
+            continue
+        names = {
+            str(candidate["referencedDecl"]["name"])
+            for candidate in iter_nodes(node)
+            if candidate.get("kind") == "DeclRefExpr"
+            and isinstance(candidate.get("referencedDecl"), dict)
+            and candidate["referencedDecl"].get("kind") in {"FunctionDecl", "CXXMethodDecl", "FunctionTemplateDecl"}
+            and candidate["referencedDecl"].get("name")
+        }
+        if names:
+            targets.setdefault((caller, str(node["name"])), set()).update(names)
+    for node, ancestors in iter_nodes_with_ancestors(ast):
+        if node.get("kind") != "BinaryOperator" or node.get("opcode") != "=":
+            continue
+        caller = enclosing_function_name(ancestors)
+        children = [child for child in node.get("inner", []) or [] if isinstance(child, dict)]
+        if caller is None or len(children) != 2:
+            continue
+        variable_name, variable_kind = declref_info(children[0])
+        function_names = {
+            str(candidate["referencedDecl"]["name"])
+            for candidate in iter_nodes(children[1])
+            if candidate.get("kind") == "DeclRefExpr"
+            and isinstance(candidate.get("referencedDecl"), dict)
+            and candidate["referencedDecl"].get("kind") in {"FunctionDecl", "CXXMethodDecl", "FunctionTemplateDecl"}
+            and candidate["referencedDecl"].get("name")
+        }
+        if variable_name and variable_kind == "VarDecl" and function_names:
+            targets.setdefault((caller, variable_name), set()).update(function_names)
+    return targets
 
 
 def allow_rule_matches(rule: AllowRule, finding: Finding) -> bool:
@@ -619,15 +905,30 @@ def collect_findings(
 
     for unit, ast in units_and_asts:
         source_bytes = unit.source.read_bytes()
+        pointer_targets = local_function_pointer_targets(ast)
+        unit_local_functions = {
+            str(candidate["name"])
+            for candidate in iter_nodes(ast)
+            if candidate.get("kind") == "FunctionDecl" and candidate.get("name") and node_has_body(candidate)
+        }
         for node, ancestors in iter_nodes_with_ancestors(ast):
-            if node.get("kind") != "CallExpr":
+            if node.get("kind") not in {"CallExpr", "AtomicExpr"}:
                 continue
             name, target_kind = call_target(node)
-            if not name or name in CONTROL_CALLEES or name.startswith("__") or name.startswith("_OSSwap") or name.startswith("p101_") or name in locals_ or name in allow:
+            if not name:
+                continue
+            caller = enclosing_function_name(ancestors) or "?"
+            if target_kind not in {None, "", "FunctionDecl", "CXXMethodDecl", "FunctionTemplateDecl"}:
+                resolved = pointer_targets.get((caller, name), set())
+                if len(resolved) == 1:
+                    name        = next(iter(resolved))
+                    target_kind = "FunctionDecl"
+            name = canonical_callee_name(name)
+            if name in CONTROL_CALLEES or name.startswith("__") or name.startswith("_OSSwap") or name.startswith("p101_") or name in unit_local_functions or name in locals_ or name in allow:
                 continue
             is_indirect = target_kind not in {None, "", "FunctionDecl", "CXXMethodDecl", "FunctionTemplateDecl"}
             wrapper = "" if is_indirect else inventory.get(name, "")
-            if wrapper and enclosing_function_name(ancestors) == wrapper:
+            if wrapper and caller == wrapper:
                 continue
             replacement = wrapper
             file_path, line, column = spelling_location_with_ancestors(node, ancestors, unit.source, source_bytes)
@@ -651,7 +952,7 @@ def collect_findings(
                 line=line,
                 column=column,
                 name=name,
-                caller=enclosing_function_name(ancestors) or "?",
+                caller=caller,
                 kind=kind,
                 replacement=replacement,
                 category=category,
@@ -754,6 +1055,16 @@ def print_json(findings: list[Finding], parse_failures: list[ParseFailure] | Non
 
 
 def module_name_for(path: Path) -> str:
+    parts = path.with_suffix("").parts
+    for boundary in ("src", "include"):
+        if boundary not in parts:
+            continue
+        boundary_index = len(parts) - 1 - tuple(reversed(parts)).index(boundary)
+        module_parts = list(parts[boundary_index + 1 :])
+        if boundary == "include" and len(module_parts) > 1 and module_parts[0].startswith("p101_"):
+            module_parts.pop(0)
+        if module_parts:
+            return "/".join(module_parts)
     return path.stem
 
 
@@ -785,27 +1096,7 @@ def source_line_facts(path: Path) -> Iterable[tuple[str, int, tuple[object, ...]
     text = path.read_text(encoding="utf-8", errors="ignore")
     for line_number, line in enumerate(text.splitlines(), start=1):
         stripped = line.strip()
-        include = re.match(r'#\s*include\s*([<"])([^>"]+)[>"]', stripped)
-        if include:
-            print_target = include.group(2)
-            is_local = include.group(1) == '"'
-            yield ("INCLUDE", line_number, (print_target, bool_text(is_local)))
-
-        macro = re.match(r"#\s*define\s+([A-Za-z_][A-Za-z0-9_]*)", stripped)
-        if macro:
-            name = macro.group(1)
-            if not (len(name) > 2 and name.endswith("_H")):
-                yield ("MACRO", line_number, (name,))
-
         if path.suffix not in HEADER_SUFFIXES:
-            if "struct p101_env" in stripped:
-                yield ("NOTE", line_number, ("ENV_USE",))
-            if re.search(r"\bP101_TRACE\s*\(", stripped):
-                yield ("NOTE", line_number, ("TRACE_USE",))
-            if "struct p101_error" in stripped:
-                yield ("NOTE", line_number, ("ERROR_USE",))
-            if re.search(r"\b(P101_ERROR_[A-Za-z0-9_]*|p101_error_has_[A-Za-z0-9_]*|p101_error_is_[A-Za-z0-9_]*|p101_error_reset)\s*\(", stripped):
-                yield ("NOTE", line_number, ("ERROR_CHECK",))
             if "P101_ERROR_CONTRACT_ALLOW_NO_ERROR" in stripped:
                 yield ("NOTE", line_number, ("ERROR_OPTIONAL",))
 
@@ -856,9 +1147,103 @@ def function_has_parameter_type(node: dict[str, Any], needle: str) -> bool:
     return False
 
 
-def collect_module_facts(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]], roots: list[Path]) -> list[tuple[str, Path, int, tuple[object, ...]]]:
+def is_error_query_name(name: str | None) -> bool:
+    return bool(name and (name.startswith("p101_error_has_") or name.startswith("p101_error_is_")))
+
+
+def is_flow_fallible_call(call: dict[str, Any]) -> bool:
+    needs_env, needs_error = call_contract(call)
+    return needs_env and needs_error and not call_discards_error(call)
+
+
+def call_argument_object(call: dict[str, Any], argument_index: int) -> str:
+    children = [child for child in call.get("inner", []) or [] if isinstance(child, dict)]
+    ast_index = argument_index + 1
+    if ast_index >= len(children):
+        return "?"
+    name, kind = declref_info(children[ast_index])
+    return name if name is not None and kind in {"ParmVarDecl", "VarDecl"} else "?"
+
+
+def expression_error_flow(node: dict[str, Any], pending: set[str], unit: TranslationUnit, source_bytes: bytes) -> tuple[set[str], list[tuple[str, int]]]:
+    findings: list[tuple[str, int]] = []
+    pending = set(pending)
+    calls = [candidate for candidate in iter_nodes(node) if candidate.get("kind") == "CallExpr"]
+    calls.sort(key=lambda candidate: node_offset(candidate) if node_offset(candidate) is not None else sys.maxsize)
+    for call in calls:
+        name = call_name(call)
+        if is_error_query_name(name):
+            pending.discard(call_argument_object(call, 0))
+            continue
+        if not is_flow_fallible_call(call):
+            continue
+        error_object = call_argument_object(call, 1)
+        if error_object in pending:
+            _, line, _ = spelling_location(call, unit.source, source_bytes)
+            findings.append(("ERROR_UNCHECKED_CHAIN", line or 1))
+        pending.add(error_object)
+    return pending, findings
+
+
+def statement_error_flow(node: dict[str, Any], pending: set[str], unit: TranslationUnit, source_bytes: bytes) -> tuple[set[str], list[tuple[str, int]]]:
+    kind = node.get("kind")
+    children = [child for child in node.get("inner", []) or [] if isinstance(child, dict)]
+    findings: list[tuple[str, int]] = []
+
+    if kind == "CompoundStmt":
+        for child in children:
+            pending, child_findings = statement_error_flow(child, pending, unit, source_bytes)
+            findings.extend(child_findings)
+        return pending, findings
+
+    if kind == "IfStmt" and children:
+        condition_pending, condition_findings = expression_error_flow(children[0], pending, unit, source_bytes)
+        findings.extend(condition_findings)
+        then_pending, then_findings = statement_error_flow(children[1], condition_pending, unit, source_bytes) if len(children) > 1 else (condition_pending, [])
+        else_pending, else_findings = statement_error_flow(children[2], condition_pending, unit, source_bytes) if len(children) > 2 else (condition_pending, [])
+        findings.extend(then_findings)
+        findings.extend(else_findings)
+        return then_pending | else_pending, findings
+
+    if kind == "ReturnStmt":
+        if children:
+            _, return_findings = expression_error_flow(children[0], pending, unit, source_bytes)
+            findings.extend(return_findings)
+        return set(), findings
+
+    if kind in {"ForStmt", "WhileStmt", "DoStmt", "SwitchStmt", "CaseStmt", "DefaultStmt"}:
+        # These nodes need a full CFG to merge loop back-edges and case
+        # fallthrough precisely. Audit their bodies independently, but do not
+        # invent a sequential path across the boundary.
+        for child in children:
+            _, child_findings = statement_error_flow(child, pending, unit, source_bytes)
+            findings.extend(child_findings)
+        return pending, findings
+
+    return expression_error_flow(node, pending, unit, source_bytes)
+
+
+def function_error_flow_notes(node: dict[str, Any], unit: TranslationUnit, source_bytes: bytes) -> list[tuple[str, int]]:
+    body = next((child for child in node.get("inner", []) or [] if isinstance(child, dict) and child.get("kind") == "CompoundStmt"), None)
+    if body is None:
+        return []
+    _, lines = statement_error_flow(body, set(), unit, source_bytes)
+    return sorted(set(lines), key=lambda item: (item[1], item[0]))
+
+
+def collect_module_facts(
+    units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]],
+    roots: list[Path],
+    preprocessing_facts: list[tuple[str, Path, int, tuple[object, ...]]] | None = None,
+) -> list[tuple[str, Path, int, tuple[object, ...]]]:
     facts: list[tuple[str, Path, int, tuple[object, ...]]] = []
     seen: set[tuple[str, str, int, tuple[object, ...]]] = set()
+
+    for kind, path, line, fields in preprocessing_facts or []:
+        key = (kind, str(path), line, fields)
+        if key not in seen:
+            seen.add(key)
+            facts.append((kind, path, line, fields))
 
     for unit, ast in units_and_asts:
         source_bytes = unit.source.read_bytes()
@@ -869,7 +1254,7 @@ def collect_module_facts(units_and_asts: list[tuple[TranslationUnit, dict[str, A
                 seen.add(key)
                 facts.append((kind, unit.source, line, fields))
 
-        for node in iter_nodes(ast):
+        for node, ancestors in iter_nodes_with_ancestors(ast):
             kind = node.get("kind")
             if kind not in {"FunctionDecl", "CallExpr", "TypedefDecl", "RecordDecl", "ParmVarDecl", "VarDecl"}:
                 continue
@@ -905,6 +1290,12 @@ def collect_module_facts(units_and_asts: list[tuple[TranslationUnit, dict[str, A
                         if key not in seen:
                             seen.add(key)
                             facts.append(("NOTE", file_path, line, fields))
+                    for note_kind, finding_line in function_error_flow_notes(node, unit, source_bytes):
+                        fields = (note_kind,)
+                        key = ("NOTE", str(file_path), finding_line, fields)
+                        if key not in seen:
+                            seen.add(key)
+                            facts.append(("NOTE", file_path, finding_line, fields))
                 continue
 
             if kind == "CallExpr":
@@ -916,6 +1307,30 @@ def collect_module_facts(units_and_asts: list[tuple[TranslationUnit, dict[str, A
                     if key not in seen:
                         seen.add(key)
                         facts.append(("CALL", file_path, line, fields))
+                    if call_discards_error(node):
+                        fields = ("ERROR_DISCARD",)
+                        key = ("NOTE", str(file_path), line, fields)
+                        if key not in seen:
+                            seen.add(key)
+                            facts.append(("NOTE", file_path, line, fields))
+                    if name in {"p101_env_trace", "p101_env_trace_exit"}:
+                        fields = ("TRACE_USE",)
+                        key = ("NOTE", str(file_path), line, fields)
+                        if key not in seen:
+                            seen.add(key)
+                            facts.append(("NOTE", file_path, line, fields))
+                    if is_error_query_name(name):
+                        fields = ("ERROR_CHECK",)
+                        key = ("NOTE", str(file_path), line, fields)
+                        if key not in seen:
+                            seen.add(key)
+                            facts.append(("NOTE", file_path, line, fields))
+                    if any(ancestor.get("kind") == "ReturnStmt" for ancestor in ancestors):
+                        fields = ("ERROR_PROPAGATED",)
+                        key = ("NOTE", str(file_path), line, fields)
+                        if key not in seen:
+                            seen.add(key)
+                            facts.append(("NOTE", file_path, line, fields))
                 continue
 
             if is_header and kind in {"TypedefDecl", "RecordDecl"}:
@@ -1091,11 +1506,16 @@ def main(argv: list[str]) -> int:
             return 2
 
     units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]] = []
+    preprocessing_facts: list[tuple[str, Path, int, tuple[object, ...]]] = []
     parse_failures: list[ParseFailure] = []
     header_cflags = header_compile_flags(compile_db, paths, args.cflag, args.header_root)
+    source_cflags = header_compile_flags({}, paths, args.cflag, args.header_root)
     for unit in units:
         try:
-            units_and_asts.append((unit, clang_ast(args.clang, unit, header_cflags, args.timeout)))
+            extra_flags = source_cflags if unit.command is not None else header_cflags
+            units_and_asts.append((unit, clang_ast(args.clang, unit, extra_flags, args.timeout)))
+            if args.emit_module_facts or args.facts_output is not None:
+                preprocessing_facts.extend(clang_preprocessor_facts(args.clang, unit, extra_flags, paths, args.timeout))
         except (OSError, RuntimeError, json.JSONDecodeError) as exc:
             message = str(exc)
             parse_failures.append(ParseFailure(path=str(unit.source), message=message))
@@ -1113,13 +1533,13 @@ def main(argv: list[str]) -> int:
 
     if args.emit_module_facts:
         parsed_units = [unit for unit, _ in units_and_asts]
-        print_module_facts(parsed_units, collect_module_facts(units_and_asts, paths))
+        print_module_facts(parsed_units, collect_module_facts(units_and_asts, paths, preprocessing_facts))
         return 2 if parse_failures else 0
 
     parsed_units = [unit for unit, _ in units_and_asts]
     if args.facts_output is not None:
         try:
-            write_module_facts(args.facts_output, parsed_units, collect_module_facts(units_and_asts, paths))
+            write_module_facts(args.facts_output, parsed_units, collect_module_facts(units_and_asts, paths, preprocessing_facts))
         except OSError as exc:
             print(f"p101-wrapper-audit: could not write facts: {exc}", file=sys.stderr)
             return 2
@@ -1134,6 +1554,12 @@ def main(argv: list[str]) -> int:
             write_instrumentation(args.instrumentation_output, collect_instrumentation(units_and_asts, paths))
         except OSError as exc:
             print(f"p101-wrapper-audit: could not write instrumentation coverage: {exc}", file=sys.stderr)
+            return 2
+    if args.mutation_candidates_output is not None:
+        try:
+            write_mutation_candidates(args.mutation_candidates_output, collect_mutation_candidates(units_and_asts, paths))
+        except (OSError, UnicodeDecodeError) as exc:
+            print(f"p101-wrapper-audit: could not write mutation candidates: {exc}", file=sys.stderr)
             return 2
 
     local_functions = collect_local_functions(units_and_asts, paths)

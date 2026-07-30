@@ -57,6 +57,46 @@ def test_external_inventory_does_not_fail_by_default() -> None:
         assert "external-call: third_party" in result.stdout
 
 
+def test_simple_local_function_pointer_target_is_resolved() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        source.write_text(
+            """
+            #include <stdlib.h>
+            int main(void) {
+                void *(*allocate)(size_t) = malloc;
+                void *value = allocate(4);
+                free(value);
+                return 0;
+            }
+            """,
+            encoding="utf-8",
+        )
+        result = run_tool(str(source))
+        assert result.returncode == 1, result.stderr + result.stdout
+        assert "missed-wrapper: malloc" in result.stdout
+        assert "indirect-call: allocate" not in result.stdout
+
+
+def test_unresolved_function_pointer_parameter_remains_boundary() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        source.write_text(
+            """
+            static int invoke(int (*operation)(void)) {
+                return operation();
+            }
+            int main(void) {
+                return invoke(0);
+            }
+            """,
+            encoding="utf-8",
+        )
+        result = run_tool(str(source))
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "indirect-call: operation" in result.stdout
+
+
 def test_bool_returning_local_function_is_not_external() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "main.c"
@@ -77,6 +117,42 @@ def test_bool_returning_local_function_is_not_external() -> None:
         assert "external-call: ready" not in result.stdout
 
 
+def test_cross_translation_unit_definition_is_local() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "helper.c").write_text("int helper(void) { return 7; }\n", encoding="utf-8")
+        (root / "main.c").write_text("int helper(void); int main(void) { return helper(); }\n", encoding="utf-8")
+
+        result = run_tool("--strict-external", str(root))
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "external-call: helper" not in result.stdout
+
+
+def test_declaration_without_definition_remains_external() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        source.write_text("int provided_elsewhere(void); int main(void) { return provided_elsewhere(); }\n", encoding="utf-8")
+
+        result = run_tool("--strict-external", str(source))
+
+        assert result.returncode == 1, result.stderr + result.stdout
+        assert "external-call: provided_elsewhere" in result.stdout
+
+
+def test_module_facts_exclude_compiler_pseudo_files() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        source.write_text("#define OWN_MACRO 1\nint main(void) { return OWN_MACRO - 1; }\n", encoding="utf-8")
+
+        result = run_tool("--emit-module-facts", str(source))
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "<built-in>" not in result.stdout
+        assert "<command line>" not in result.stdout
+        assert "\tOWN_MACRO" in result.stdout
+
+
 def test_compiler_builtins_are_not_external_boundaries() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "main.c"
@@ -91,6 +167,33 @@ def test_compiler_builtins_are_not_external_boundaries() -> None:
         result = run_tool("--strict-external", str(source))
         assert result.returncode == 0, result.stderr + result.stdout
         assert "__builtin_popcount" not in result.stdout
+
+
+def test_fortified_builtin_matches_source_level_boundary_rule() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "main.c"
+        allow = root / "allow.txt"
+        source.write_text(
+            """
+            #include <stddef.h>
+            static void *copy_bytes(void *dst, const void *src, size_t size) {
+                return __builtin___memcpy_chk(
+                    dst, src, size, __builtin_object_size(dst, 0));
+            }
+            int main(void) {
+                char dst[4] = {0};
+                const char src[4] = {1, 2, 3, 4};
+                return copy_bytes(dst, src, sizeof(src)) == dst ? 0 : 1;
+            }
+            """,
+            encoding="utf-8",
+        )
+        allow.write_text("main.c:copy_bytes:memcpy\n", encoding="utf-8")
+        result = run_tool("--strict-external", "--allow-file", str(allow), str(source))
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "stale boundary rule" not in result.stderr
+        assert "__builtin___memcpy_chk" not in result.stdout
 
 
 def test_json_output() -> None:
@@ -173,6 +276,58 @@ def test_compile_db_only_requires_compile_database() -> None:
     result = run_tool("--compile-db-only", ".")
     assert result.returncode == 2
     assert "--compile-db-only requires --compile-db" in result.stderr
+
+
+def test_compile_database_keeps_flags_per_translation_unit() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        first = root / "first.c"
+        second = root / "second.c"
+        database = root / "compile_commands.json"
+        first.write_text(
+            "#ifndef FIRST\n#error FIRST is required\n#endif\n#ifdef SECOND\n#error SECOND leaked\n#endif\nint first(void) { return 1; }\n",
+            encoding="utf-8",
+        )
+        second.write_text(
+            "#ifndef SECOND\n#error SECOND is required\n#endif\n#ifdef FIRST\n#error FIRST leaked\n#endif\nint second(void) { return 2; }\n",
+            encoding="utf-8",
+        )
+        database.write_text(
+            json.dumps(
+                [
+                    {"directory": str(root), "file": str(first), "arguments": ["clang", "-DFIRST", "-c", str(first)]},
+                    {"directory": str(root), "file": str(second), "arguments": ["clang", "-DSECOND", "-c", str(second)]},
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        result = run_tool("--compile-db", str(database), "--compile-db-only", str(root))
+
+        assert result.returncode == 0, result.stderr + result.stdout
+
+
+def test_module_facts_ignore_inactive_preprocessor_branches() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        source.write_text(
+            """
+            #if 0
+            #define INACTIVE_LIMIT 99
+            #include "inactive.h"
+            #endif
+            #define ACTIVE_LIMIT 7
+            int main(void) { return ACTIVE_LIMIT; }
+            """,
+            encoding="utf-8",
+        )
+
+        result = run_tool("--emit-module-facts", str(source))
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "ACTIVE_LIMIT" in result.stdout
+        assert "INACTIVE_LIMIT" not in result.stdout
+        assert "inactive.h" not in result.stdout
 
 
 def test_fact_snapshot_reuses_compile_database_includes_for_headers() -> None:
@@ -386,7 +541,7 @@ def test_static_inline_header_calls_are_audited_at_header_location() -> None:
         assert "missed-wrapper: malloc" in result.stdout
 
 
-def test_indirect_function_pointer_calls_are_reported_as_boundaries() -> None:
+def test_initialized_function_pointer_calls_are_resolved() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "main.c"
         source.write_text(
@@ -400,10 +555,55 @@ def test_indirect_function_pointer_calls_are_reported_as_boundaries() -> None:
             encoding="utf-8",
         )
         result = run_tool(str(source))
+        assert result.returncode == 1, result.stderr + result.stdout
+        assert "indirect_calls: 0" in result.stdout
+        assert "missed-wrapper: puts" in result.stdout
+        assert "indirect-call: fp" not in result.stdout
+
+
+def test_reassigned_function_pointer_with_competing_targets_is_indirect() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        source.write_text(
+            """
+            int puts(const char *);
+            static int local_puts(const char *text) { (void)text; return 0; }
+            int run(int external) {
+                int (*operation)(const char *) = local_puts;
+                if(external) {
+                    operation = puts;
+                }
+                return operation("hello");
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        result = run_tool(str(source))
+
         assert result.returncode == 0, result.stderr + result.stdout
-        assert "indirect_calls: 1" in result.stdout
-        assert "indirect-call: fp" in result.stdout
-        assert "external-call: fp" not in result.stdout
+        assert "indirect-call: operation" in result.stdout
+        assert "missed-wrapper: puts" not in result.stdout
+
+
+def test_atomic_expression_is_audited() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "main.c"
+        source.write_text(
+            """
+            #include <stdatomic.h>
+            unsigned int increment(atomic_uint *value) {
+                return atomic_fetch_add(value, 1U);
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        result = run_tool(str(source))
+
+        assert result.returncode == 1, result.stderr + result.stdout
+        assert "missed-wrapper: atomic_fetch_add" in result.stdout
+        assert "p101_atomic_uint_fetch_add" in result.stdout
 
 
 def test_module_fact_output_uses_clang_ast_for_c_facts() -> None:
@@ -433,6 +633,8 @@ def test_module_fact_output_uses_clang_ast_for_c_facts() -> None:
             static int helper(int value) { return value + 1; }
             static void traced(const struct p101_env *env, struct p101_error *err) {
                 P101_TRACE(env);
+                struct p101_env *created = p101_env_create(err, NULL);
+                (void)created;
                 if(p101_error_has_error(err)) {
                     P101_ERROR_RAISE_USER(err, "bad", 1);
                 }
@@ -461,11 +663,34 @@ def test_module_fact_output_uses_clang_ast_for_c_facts() -> None:
         assert "\tTRACE_USE" in result.stdout
         assert "\tERROR_CHECK" in result.stdout
         assert "\tERROR_OPTIONAL" in result.stdout
+        assert "\tERROR_DISCARD" in result.stdout
+        create_fact = next(line for line in result.stdout.splitlines() if "\tCALL\t" in line and "\tp101_env_create\t" in line)
+        assert create_fact.endswith("\tp101_env_create\t0\t1")
         assert "\tTYPE\t" in result.stdout
         assert "\tthing_callback" in result.stdout
         assert "\tthing_state" in result.stdout
         assert "\tMACRO\t" in result.stdout
         assert "\tTHING_LIMIT" in result.stdout
+
+
+def test_module_fact_names_preserve_subdirectories() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        first = root / "src" / "alpha"
+        second = root / "src" / "beta"
+        public = root / "include" / "p101_demo" / "alpha"
+        first.mkdir(parents=True)
+        second.mkdir(parents=True)
+        public.mkdir(parents=True)
+        (first / "common.c").write_text("int alpha_common(void) { return 1; }\n", encoding="utf-8")
+        (second / "common.c").write_text("int beta_common(void) { return 2; }\n", encoding="utf-8")
+        (public / "common.h").write_text("int alpha_common(void);\n", encoding="utf-8")
+
+        result = run_tool("--emit-module-facts", str(root))
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        assert "\talpha/common\t" in result.stdout
+        assert "\tbeta/common\t" in result.stdout
 
 
 def test_reusable_fact_snapshot_and_input_manifest() -> None:
@@ -561,18 +786,120 @@ def test_module_facts_parse_cxx_headers_as_cxx() -> None:
         assert "\tdisplay\t" in result.stdout
 
 
+def test_mutation_candidates_use_clang_locations() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "main.c"
+        output = root / "mutations.json"
+        source.write_text(
+            """
+            #include <stdbool.h>
+            struct p101_env;
+            struct p101_error;
+            bool p101_error_has_error(const struct p101_error *);
+            void p101_free(const struct p101_env *, void *);
+            int check(const struct p101_env *env, struct p101_error *err, int value, void *memory) {
+                if(value < 7 && p101_error_has_error(err)) {
+                    p101_free(env, memory);
+                    return 1;
+                }
+                return 0;
+            }
+            """,
+            encoding="utf-8",
+        )
+        result = run_tool("--mutation-candidates-output", str(output), str(source))
+        assert result.returncode == 0, result.stderr + result.stdout
+        data = json.loads(output.read_text(encoding="utf-8"))
+        assert data["schema"] == "p101-mutation-candidates-v1"
+        operators = {item["operator"] for item in data["candidates"]}
+        assert {"comparison-boundary", "error-predicate", "skip-cleanup"} <= operators
+        for candidate in data["candidates"]:
+            source_bytes = source.read_bytes()
+            assert source_bytes[candidate["start"] : candidate["end"]].decode() == candidate["original"]
+
+
+def test_error_flow_facts_split_if_branches_and_find_reachable_chains() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "flow.c"
+        source.write_text(
+            """
+            struct p101_env;
+            struct p101_error;
+            int p101_first(const struct p101_env *, struct p101_error *);
+            int p101_second(const struct p101_env *, struct p101_error *);
+            int p101_error_has_error(const struct p101_error *);
+            int separate(const struct p101_env *env, struct p101_error *err, int choice) {
+                if(choice) {
+                    p101_first(env, err);
+                } else {
+                    p101_second(env, err);
+                }
+                return p101_error_has_error(err);
+            }
+            int chained(const struct p101_env *env, struct p101_error *err) {
+                p101_first(env, err);
+                p101_second(env, err);
+                return 0;
+            }
+            """,
+            encoding="utf-8",
+        )
+        result = run_tool("--emit-module-facts", str(source))
+        assert result.returncode == 0, result.stderr + result.stdout
+        chain_notes = [line for line in result.stdout.splitlines() if "\tERROR_UNCHECKED_CHAIN" in line]
+        assert len(chain_notes) == 1
+        assert "\t17\tERROR_UNCHECKED_CHAIN" in chain_notes[0]
+
+
+def test_error_flow_checks_the_matching_error_object() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "flow.c"
+        source.write_text(
+            """
+            struct p101_env;
+            struct p101_error;
+            int p101_first(const struct p101_env *, struct p101_error *);
+            int p101_second(const struct p101_env *, struct p101_error *);
+            int p101_error_has_error(const struct p101_error *);
+            int mismatched(const struct p101_env *env, struct p101_error *first, struct p101_error *second) {
+                p101_first(env, first);
+                (void)p101_error_has_error(second);
+                p101_second(env, first);
+                return 0;
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        result = run_tool("--emit-module-facts", str(source))
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        chain_notes = [line for line in result.stdout.splitlines() if "\tERROR_UNCHECKED_CHAIN" in line]
+        assert len(chain_notes) == 1
+        assert "\t10\tERROR_UNCHECKED_CHAIN" in chain_notes[0]
+
+
 def main() -> int:
     tests = [
         test_missed_wrapper_and_local_function,
         test_external_inventory_does_not_fail_by_default,
+        test_simple_local_function_pointer_target_is_resolved,
+        test_unresolved_function_pointer_parameter_remains_boundary,
         test_bool_returning_local_function_is_not_external,
+        test_cross_translation_unit_definition_is_local,
+        test_declaration_without_definition_remains_external,
+        test_module_facts_exclude_compiler_pseudo_files,
         test_compiler_builtins_are_not_external_boundaries,
+        test_fortified_builtin_matches_source_level_boundary_rule,
         test_json_output,
         test_inventory_json_output,
         test_missing_compile_db_is_clear,
         test_compile_db_without_source_command_is_clear,
         test_compile_db_only_ignores_inactive_source,
         test_compile_db_only_requires_compile_database,
+        test_compile_database_keeps_flags_per_translation_unit,
+        test_module_facts_ignore_inactive_preprocessor_branches,
         test_fact_snapshot_reuses_compile_database_includes_for_headers,
         test_active_headers_only_uses_translation_unit_language,
         test_header_root_discovers_sibling_library_includes,
@@ -581,11 +908,17 @@ def main() -> int:
         test_timeout_must_be_positive,
         test_keep_going_reports_partial_results_and_parse_failures,
         test_static_inline_header_calls_are_audited_at_header_location,
-        test_indirect_function_pointer_calls_are_reported_as_boundaries,
+        test_initialized_function_pointer_calls_are_resolved,
+        test_reassigned_function_pointer_with_competing_targets_is_indirect,
+        test_atomic_expression_is_audited,
         test_module_fact_output_uses_clang_ast_for_c_facts,
+        test_module_fact_names_preserve_subdirectories,
         test_reusable_fact_snapshot_and_input_manifest,
         test_module_facts_include_bool_returning_definitions,
         test_module_facts_parse_cxx_headers_as_cxx,
+        test_mutation_candidates_use_clang_locations,
+        test_error_flow_facts_split_if_branches_and_find_reachable_chains,
+        test_error_flow_checks_the_matching_error_object,
     ]
     for test in tests:
         test()
