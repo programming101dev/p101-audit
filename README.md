@@ -60,6 +60,12 @@ Options:
   compile-database and fact hashes, discovered/active/parsed files, inactive
   sources, parse failures, allowed callees, and hashes of scoped boundary-rule
   files.
+- `--wrapper-form-contract FILE` checks selected definitions against a
+  project-owned structural wrapper contract.
+- `--wrapper-form-only` skips the p101 boundary inventory and emits only the
+  wrapper-form result. This is the normal mode for projects whose wrappers do
+  not use the `p101_` prefix. With `-j`, it emits
+  `p101-wrapper-form-findings-v1` JSON.
 
 Examples:
 
@@ -70,6 +76,8 @@ Examples:
 ./p101-wrapper-audit --keep-going --timeout 60 --cflag=-Iinclude src
 ./p101-wrapper-audit --emit-module-facts --cflag=-Iinclude src include
 ./p101-wrapper-audit --facts-output facts.tsv --input-manifest inputs.json src include
+./p101-wrapper-audit --wrapper-form-contract wrapper-form-contract.json --wrapper-form-only \
+  --compile-db build/compile_commands.json --compile-db-only .
 ./p101-wrapper-audit -e -a TEST_ASSERT_EQUAL_INT test src
 ```
 
@@ -101,6 +109,17 @@ It cannot see:
 For teaching, that is the intended ceiling: the audit tells students whether
 their code follows the wrapper contract. Pair it with `p101-observe`,
 `p101-resource-tracker`, and sanitizers for runtime behavior.
+
+## Wrapper-form contracts
+
+Wrapper-form checking is project-neutral. A contract selects wrapper names and
+declares context/error parameter positions, target-name mapping, tracing,
+fault-injection, signature, and lifecycle-hook requirements. Projects may name
+their own instrumentation calls; p101 names are only the built-in default.
+
+See [docs/wrapper-form-contract.md](docs/wrapper-form-contract.md) for the
+schema, diagnostics, example, and limits. The check uses the same Clang AST
+pass that produces P101FACT snapshots; it does not contain another C parser.
 
 ## Exit status
 

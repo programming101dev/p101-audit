@@ -61,10 +61,12 @@ FORTIFIED_CALLEES = {
     "__builtin___snprintf_chk": "snprintf",
     "__builtin___sprintf_chk": "sprintf",
     "__builtin___stpcpy_chk": "stpcpy",
+    "__builtin___stpncpy_chk": "stpncpy",
     "__builtin___strcat_chk": "strcat",
     "__builtin___strcpy_chk": "strcpy",
     "__builtin___strncat_chk": "strncat",
     "__builtin___strncpy_chk": "strncpy",
+    "__builtin___memccpy_chk": "memccpy",
     "__builtin___vfprintf_chk": "vfprintf",
     "__builtin___vprintf_chk": "vprintf",
     "__builtin___vsnprintf_chk": "vsnprintf",
@@ -119,6 +121,16 @@ class MutationCandidate:
     replacement: str
 
 
+@dataclass(frozen=True)
+class FormFinding:
+    diagnostic_id: str
+    path: str
+    line: int
+    function: str
+    message: str
+    evidence: dict[str, object]
+
+
 @dataclass
 class AllowRule:
     path: str
@@ -157,6 +169,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--input-manifest", type=Path, metavar="FILE", help="write the admitted-input manifest as JSON")
     parser.add_argument("--instrumentation-output", type=Path, metavar="FILE", help="write per-function tracing, fault, and resource instrumentation coverage as JSON")
     parser.add_argument("--mutation-candidates-output", type=Path, metavar="FILE", help="write safe Clang-located mutation candidates as JSON")
+    parser.add_argument("--wrapper-form-contract", type=Path, metavar="FILE", help="check wrapper function form against a project-neutral JSON contract")
+    parser.add_argument("--wrapper-form-only", action="store_true", help="run only the wrapper-form contract check")
     return parser.parse_args(argv)
 
 
@@ -457,8 +471,6 @@ def ast_command_from_compile_command(command: str, tu: TranslationUnit, extra_cf
             continue
         if arg in {"-c", "-o", "-MF", "-MT", "-MQ"}:
             skip_next = arg in {"-o", "-MF", "-MT", "-MQ"}
-            if arg == "-c":
-                continue
             continue
         if arg.startswith("-o") and arg != "-ObjC":
             continue
@@ -567,6 +579,17 @@ def node_range_offsets(node: dict[str, Any]) -> tuple[int, int] | None:
     return start, finish + token_length
 
 
+def call_has_optional_error_annotation(node: dict[str, Any], source_bytes: bytes) -> bool:
+    offsets = node_range_offsets(node)
+    if offsets is None:
+        return False
+    start, end = offsets
+    line_end = source_bytes.find(b"\n", end)
+    if line_end < 0:
+        line_end = len(source_bytes)
+    return b"P101_ERROR_CONTRACT_ALLOW_NO_ERROR" in source_bytes[start:line_end]
+
+
 def spelling_location_with_ancestors(node: dict[str, Any], ancestors: tuple[dict[str, Any], ...], default_file: Path | None = None, source_bytes: bytes | None = None, allow_default_file: bool = True) -> tuple[Path | None, int, int]:
     file_path, line, column = spelling_location(node, default_file, source_bytes, allow_default_file)
     if file_path is not None:
@@ -631,7 +654,7 @@ def collect_instrumentation(units_and_asts: list[tuple[TranslationUnit, dict[str
     function_capabilities: dict[tuple[str, str], dict[str, bool]] = {}
     capability_calls = {
         "trace_entry": {"p101_env_trace"},
-        "trace_exit": {"p101_env_trace_exit"},
+        "trace_exit": {"p101_env_trace_exit", "p101_env_trace_scope_cleanup"},
         "fault": {"p101_env_check_fault", "p101_env_check_fault_action"},
         "fd": {"p101_env_track_open", "p101_env_track_close", "p101_env_track_fork", "p101_env_track_spawn", "p101_env_track_exec", "p101_env_track_exec_failure"},
         "allocation": {"p101_env_track_alloc", "p101_env_track_free", "p101_env_track_realloc"},
@@ -652,6 +675,13 @@ def collect_instrumentation(units_and_asts: list[tuple[TranslationUnit, dict[str
                 continue
             seen.add(key)
             calls = {call_name(child) for child in iter_nodes(node) if child.get("kind") == "CallExpr"}
+            calls.update(
+                str(cleanup.get("name"))
+                for child in iter_nodes(node)
+                if child.get("kind") == "CleanupAttr"
+                for cleanup in [child.get("cleanup_function")]
+                if isinstance(cleanup, dict) and cleanup.get("name")
+            )
             function_key = (str(file_path), name)
             function_calls.setdefault(function_key, set()).update(calls)
             capabilities = function_capabilities.setdefault(function_key, {capability: False for capability in capability_calls})
@@ -689,6 +719,388 @@ def collect_instrumentation(units_and_asts: list[tuple[TranslationUnit, dict[str
     return sorted(records, key=lambda item: (item["path"], item["line"], item["function"]))
 
 
+def function_parameter_types(node: dict[str, Any]) -> list[str]:
+    return [
+        node_canonical_type_text(child)
+        for child in node.get("inner", []) or []
+        if isinstance(child, dict) and child.get("kind") == "ParmVarDecl"
+    ]
+
+
+def function_return_type(node: dict[str, Any], aliases: dict[str, str] | None = None) -> str:
+    signature = node_canonical_type_text(node)
+    return expand_type_aliases(signature.split("(", 1)[0].rstrip(), aliases or {})
+
+
+def node_canonical_type_text(node: dict[str, Any]) -> str:
+    type_info = node.get("type")
+    if isinstance(type_info, dict):
+        return str(type_info.get("desugaredQualType", type_info.get("qualType", "")))
+    return ""
+
+
+def expand_type_aliases(type_text: str, aliases: dict[str, str]) -> str:
+    expanded = type_text
+    for _ in range(len(aliases) + 1):
+        previous = expanded
+        for name, replacement in aliases.items():
+            expanded = re.sub(rf"\b{re.escape(name)}\b", replacement, expanded)
+        if expanded == previous:
+            break
+    return expanded
+
+
+def normalized_type(type_text: str) -> str:
+    text = re.sub(r"\b(__restrict|__restrict__|restrict|_Nonnull|_Nullable|_Null_unspecified)\b", "", type_text)
+    text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(r"\s*([,*()[\]])\s*", r"\1", text)
+    return text
+
+
+def referenced_function_decl(call: dict[str, Any], declarations: dict[str, dict[str, Any]]) -> dict[str, Any] | None:
+    for node in iter_nodes(call):
+        referenced = node.get("referencedDecl")
+        if not isinstance(referenced, dict) or referenced.get("kind") != "FunctionDecl":
+            continue
+        identifier = referenced.get("id")
+        if isinstance(identifier, str) and identifier in declarations:
+            return declarations[identifier]
+        return referenced
+    return None
+
+
+def collect_function_forms(units_and_asts: list[tuple[TranslationUnit, dict[str, Any]]], roots: list[Path]) -> list[dict[str, Any]]:
+    instrumentation = {
+        (record["path"], record["function"]): record
+        for record in collect_instrumentation(units_and_asts, roots)
+    }
+    records: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, int]] = set()
+
+    for unit, ast in units_and_asts:
+        declarations = {
+            str(node["id"]): node
+            for node in iter_nodes(ast)
+            if node.get("kind") == "FunctionDecl" and isinstance(node.get("id"), str)
+        }
+        declarations_by_name: dict[str, dict[str, Any]] = {}
+        for declaration in declarations.values():
+            if declaration.get("name"):
+                declarations_by_name.setdefault(str(declaration["name"]), declaration)
+        aliases = {
+            str(node["name"]): node_type_text(node)
+            for node in iter_nodes(ast)
+            if node.get("kind") == "TypedefDecl" and node.get("name") and node_type_text(node)
+        }
+        source_bytes = unit.source.read_bytes()
+        for node in iter_nodes(ast):
+            if node.get("kind") != "FunctionDecl" or not node_has_body(node):
+                continue
+            name = str(node.get("name", ""))
+            file_path, line, _ = spelling_location(node, unit.source, source_bytes)
+            if not name or file_path is None or not is_under(file_path, roots):
+                continue
+            key = (str(file_path), name, line)
+            if key in seen:
+                continue
+            seen.add(key)
+            calls: list[dict[str, object]] = []
+            for call in (child for child in iter_nodes(node) if child.get("kind") in {"CallExpr", "AtomicExpr"}):
+                call_target_name = call_name(call)
+                if call_target_name is None:
+                    continue
+                canonical_name = canonical_callee_name(call_target_name)
+                declaration = referenced_function_decl(call, declarations)
+                if canonical_name != call_target_name:
+                    declaration = declarations_by_name.get(canonical_name, declaration)
+                calls.append(
+                    {
+                        "name": canonical_name,
+                        "return_type": function_return_type(declaration, aliases) if declaration is not None else "",
+                        "parameter_types": function_parameter_types(declaration) if declaration is not None else [],
+                        "variadic": bool(declaration.get("variadic", False)) if declaration is not None else False,
+                    }
+                )
+            coverage = instrumentation.get((str(file_path), name), {})
+            records.append(
+                {
+                    "path": str(file_path),
+                    "line": line,
+                    "function": name,
+                    "public": not node_is_static_function(node),
+                    "return_type": function_return_type(node, aliases),
+                    "parameter_types": function_parameter_types(node),
+                    "variadic": bool(node.get("variadic", False)),
+                    "calls": calls,
+                    "call_names": sorted({str(call["name"]) for call in calls}),
+                    **{key: bool(coverage.get(key, False)) for key in ("trace_entry", "trace_exit", "fault", "fd", "allocation", "resource")},
+                }
+            )
+    records_by_function = {
+        (str(record["path"]), str(record["function"])): record
+        for record in records
+    }
+    changed = True
+    while changed:
+        changed = False
+        for record in records:
+            names = set(str(value) for value in record["call_names"])
+            for callee in tuple(names):
+                helper = records_by_function.get((str(record["path"]), callee))
+                if helper is not None:
+                    names.update(str(value) for value in helper["call_names"])
+            expanded = sorted(names)
+            if expanded != record["call_names"]:
+                record["call_names"] = expanded
+                changed = True
+    return sorted(records, key=lambda item: (item["path"], item["line"], item["function"]))
+
+
+def load_wrapper_form_contract(path: Path) -> dict[str, Any]:
+    contract = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(contract, dict):
+        raise ValueError("wrapper form contract must be a JSON object")
+    if contract.get("schema") != "p101-wrapper-form-contract-v1":
+        raise ValueError("wrapper form contract must use schema p101-wrapper-form-contract-v1")
+    selector = contract.get("selector")
+    if not isinstance(selector, dict) or not isinstance(selector.get("include"), str):
+        raise ValueError("wrapper form contract requires selector.include")
+    excludes = selector.get("exclude", [])
+    if not isinstance(excludes, list) or any(not isinstance(pattern, str) for pattern in excludes):
+        raise ValueError("wrapper form selector.exclude must be a list of regular expressions")
+    minimum_matches = selector.get("minimum_matches", 1)
+    if not isinstance(minimum_matches, int) or isinstance(minimum_matches, bool) or minimum_matches < 0:
+        raise ValueError("wrapper form selector.minimum_matches must be a non-negative integer")
+    try:
+        re.compile(str(selector["include"]))
+        for pattern in excludes:
+            re.compile(str(pattern))
+    except (TypeError, re.error) as exc:
+        raise ValueError(f"wrapper form selector contains an invalid regular expression: {exc}") from exc
+    mapping = contract.get("mapping")
+    if not isinstance(mapping, dict) or not isinstance(mapping.get("strip_prefix"), str):
+        raise ValueError("wrapper form contract requires mapping.strip_prefix")
+    requirements = contract.get("requirements", {})
+    if not isinstance(requirements, dict):
+        raise ValueError("wrapper form contract requirements must be an object")
+    overrides = contract.get("overrides", [])
+    if not isinstance(overrides, list) or any(not isinstance(item, dict) or not isinstance(item.get("match"), str) for item in overrides):
+        raise ValueError("wrapper form contract overrides must contain objects with match")
+    try:
+        for override in overrides:
+            re.compile(str(override["match"]))
+    except re.error as exc:
+        raise ValueError(f"wrapper form override contains an invalid regular expression: {exc}") from exc
+    for label in ("context_parameter", "error_parameter"):
+        specification = contract.get(label)
+        if specification is None:
+            continue
+        if not isinstance(specification, dict) or not isinstance(specification.get("type_contains"), str):
+            raise ValueError(f"wrapper form contract {label} must contain type_contains")
+        index = specification.get("index", 0)
+        if not isinstance(index, int) or isinstance(index, bool) or index < 0:
+            raise ValueError(f"wrapper form contract {label}.index must be a non-negative integer")
+        if specification.get("mode", "required") not in {"required", "optional"}:
+            raise ValueError(f"wrapper form contract {label}.mode must be required or optional")
+    capabilities = contract.get("capabilities", {})
+    if not isinstance(capabilities, dict) or any(not isinstance(value, list) or any(not isinstance(item, str) for item in value) for value in capabilities.values()):
+        raise ValueError("wrapper form contract capabilities must map function names to lists")
+    instrumentation_calls = contract.get("instrumentation_calls", {})
+    if not isinstance(instrumentation_calls, dict) or any(not isinstance(value, list) or any(not isinstance(item, str) for item in value) for value in instrumentation_calls.values()):
+        raise ValueError("wrapper form contract instrumentation_calls must map capabilities to call-name lists")
+    for policy in [requirements, *overrides]:
+        fault = policy.get("fault", "optional")
+        if fault not in {"optional", "required", "when-error", "forbidden"}:
+            raise ValueError("wrapper form fault policy must be optional, required, when-error, or forbidden")
+        call_count = policy.get("target_call_count", 1)
+        if not isinstance(call_count, int) or isinstance(call_count, bool) or call_count < 0:
+            raise ValueError("wrapper form target_call_count must be a non-negative integer")
+        for key in ("balanced_trace", "target_required", "compare_target_signature"):
+            if key in policy and not isinstance(policy[key], bool):
+                raise ValueError(f"wrapper form {key} must be boolean")
+        if "capabilities" in policy and not isinstance(policy["capabilities"], list):
+            raise ValueError("wrapper form override capabilities must be a list")
+    return contract
+
+
+def merged_form_policy(contract: dict[str, Any], function_name: str, override_hits: list[int]) -> dict[str, Any]:
+    policy = dict(contract.get("requirements", {}))
+    for index, override in enumerate(contract.get("overrides", [])):
+        pattern = str(override["match"])
+        if re.search(pattern, function_name):
+            override_hits[index] += 1
+            policy.update({key: value for key, value in override.items() if key != "match"})
+            if "target_replacement" in override:
+                policy["target"] = re.sub(pattern, str(override["target_replacement"]), function_name)
+    return policy
+
+
+def form_finding(record: dict[str, Any], diagnostic_id: str, message: str, **evidence: object) -> FormFinding:
+    return FormFinding(
+        diagnostic_id=diagnostic_id,
+        path=str(record["path"]),
+        line=int(record["line"]),
+        function=str(record["function"]),
+        message=message,
+        evidence=evidence,
+    )
+
+
+def check_wrapper_forms(records: list[dict[str, Any]], contract: dict[str, Any]) -> tuple[list[FormFinding], int, list[str]]:
+    selector = contract["selector"]
+    include = re.compile(str(selector["include"]))
+    excludes = [re.compile(str(value)) for value in selector.get("exclude", [])]
+    public_only = bool(selector.get("public_only", True))
+    selected = [
+        record
+        for record in records
+        if include.search(str(record["function"]))
+        and not any(pattern.search(str(record["function"])) for pattern in excludes)
+        and (bool(record["public"]) or not public_only)
+    ]
+    strip_prefix = str(contract["mapping"]["strip_prefix"])
+    context = contract.get("context_parameter")
+    error = contract.get("error_parameter")
+    capabilities = contract.get("capabilities", {})
+    instrumentation_calls = contract.get("instrumentation_calls", {})
+    if not isinstance(capabilities, dict) or any(not isinstance(value, list) for value in capabilities.values()):
+        return [], len(selected), ["capabilities must be an object"]
+    if not isinstance(instrumentation_calls, dict) or any(not isinstance(value, list) for value in instrumentation_calls.values()):
+        return [], len(selected), ["instrumentation_calls must be an object"]
+    override_hits = [0 for _ in contract.get("overrides", [])]
+    findings: list[FormFinding] = []
+
+    for record in selected:
+        name = str(record["function"])
+        policy = merged_form_policy(contract, name, override_hits)
+        parameters = [str(value) for value in record["parameter_types"]]
+        injected_indices: set[int] = set()
+
+        def has_instrumentation(capability: str) -> bool:
+            configured = instrumentation_calls.get(capability)
+            if configured is None:
+                return bool(record[capability])
+            return bool(set(str(value) for value in record["call_names"]) & set(str(value) for value in configured))
+
+        for label, specification, diagnostic_id in (
+            ("context", context, "P101-WFORM-002"),
+            ("error", error, "P101-WFORM-003"),
+        ):
+            if not isinstance(specification, dict):
+                continue
+            index = int(specification.get("index", 0))
+            needle = str(specification.get("type_contains", ""))
+            mode = str(specification.get("mode", "required"))
+            matches = [position for position, type_text in enumerate(parameters) if needle and needle in type_text]
+            if label == "error" and mode == "optional" and not matches:
+                continue
+            if index >= len(parameters) or needle not in parameters[index]:
+                findings.append(form_finding(record, diagnostic_id, f"{name} does not have the required {label} parameter at index {index}", expected_type_contains=needle, actual_parameters=parameters))
+            else:
+                injected_indices.add(index)
+            if matches and matches != [index]:
+                findings.append(form_finding(record, diagnostic_id, f"{name} has the {label} parameter in the wrong position", expected_index=index, actual_indices=matches))
+
+        if bool(policy.get("balanced_trace", False)) and (not has_instrumentation("trace_entry") or not has_instrumentation("trace_exit")):
+            findings.append(form_finding(record, "P101-WFORM-004", f"{name} lacks balanced entry/exit tracing", trace_entry=has_instrumentation("trace_entry"), trace_exit=has_instrumentation("trace_exit")))
+
+        fault_policy = str(policy.get("fault", "optional"))
+        error_present = isinstance(error, dict) and any(str(error.get("type_contains", "")) in value for value in parameters)
+        fault_required = fault_policy == "required" or (fault_policy == "when-error" and error_present)
+        if fault_required and not has_instrumentation("fault"):
+            findings.append(form_finding(record, "P101-WFORM-005", f"{name} lacks its required fault-injection point", fault_policy=fault_policy))
+        if fault_policy == "forbidden" and has_instrumentation("fault"):
+            findings.append(form_finding(record, "P101-WFORM-005", f"{name} has a forbidden fault-injection point", fault_policy=fault_policy))
+
+        target = policy.get("target")
+        if target is None:
+            target = name.removeprefix(strip_prefix) if name.startswith(strip_prefix) else name
+        target = str(target)
+        target_calls = [call for call in record["calls"] if call["name"] == target]
+        target_required = bool(policy.get("target_required", True))
+        target_call_count = int(policy.get("target_call_count", 1))
+        if target_required and len(target_calls) != target_call_count:
+            findings.append(form_finding(record, "P101-WFORM-006", f"{name} calls mapped target {target} {len(target_calls)} time(s), expected {target_call_count}", target=target, actual_calls=len(target_calls), expected_calls=target_call_count))
+
+        if bool(policy.get("compare_target_signature", False)) and target_required and len(target_calls) == 1:
+            target_call = target_calls[0]
+            target_parameters = [str(value) for value in target_call["parameter_types"]]
+            wrapper_parameters = [value for index, value in enumerate(parameters) if index not in injected_indices]
+            if not target_parameters and wrapper_parameters:
+                findings.append(form_finding(record, "P101-WFORM-007", f"{name} target signature could not be resolved", target=target))
+            else:
+                normalized_wrapper = [normalized_type(value) for value in wrapper_parameters]
+                normalized_target = [normalized_type(value) for value in target_parameters]
+                if normalized_wrapper != normalized_target or bool(record["variadic"]) != bool(target_call["variadic"]):
+                    findings.append(form_finding(record, "P101-WFORM-007", f"{name} parameters do not preserve the mapped target signature", target=target, wrapper_parameters=normalized_wrapper, target_parameters=normalized_target, wrapper_variadic=record["variadic"], target_variadic=target_call["variadic"]))
+                if normalized_type(str(record["return_type"])) != normalized_type(str(target_call["return_type"])):
+                    findings.append(form_finding(record, "P101-WFORM-007", f"{name} return type does not preserve the mapped target return type", target=target, wrapper_return=normalized_type(str(record["return_type"])), target_return=normalized_type(str(target_call["return_type"]))))
+
+        required_capabilities = policy.get("capabilities", capabilities.get(name, []))
+        if not isinstance(required_capabilities, list):
+            findings.append(form_finding(record, "P101-WFORM-900", f"{name} capabilities contract is not a list"))
+            continue
+        for capability in required_capabilities:
+            if capability not in {"fd", "allocation", "resource"}:
+                findings.append(form_finding(record, "P101-WFORM-900", f"{name} names unknown capability {capability}"))
+            elif not has_instrumentation(capability):
+                findings.append(form_finding(record, "P101-WFORM-008", f"{name} lacks required {capability} lifecycle instrumentation", capability=capability))
+
+    trouble: list[str] = []
+    minimum_matches = int(selector.get("minimum_matches", 1))
+    if len(selected) < minimum_matches:
+        trouble.append(f"selector matched {len(selected)} functions, expected at least {minimum_matches}")
+    for index, hits in enumerate(override_hits):
+        if hits == 0:
+            trouble.append(f"stale override: {contract['overrides'][index]['match']}")
+    selected_names = {str(record["function"]) for record in selected}
+    for name in capabilities:
+        if name not in selected_names:
+            trouble.append(f"stale capability contract: {name}")
+    return sorted(findings, key=lambda item: (item.path, item.line, item.diagnostic_id)), len(selected), trouble
+
+
+def print_wrapper_form_results(findings: list[FormFinding], checked: int, trouble: list[str], json_output: bool, contract_path: Path | None = None) -> None:
+    contract_receipt = {
+        "path": None if contract_path is None else str(contract_path.resolve()),
+        "sha256": sha256_file(contract_path),
+    }
+    if json_output:
+        print(
+            json.dumps(
+                {
+                    "schema": "p101-wrapper-form-findings-v1",
+                    "contract": contract_receipt,
+                    "functions_checked": checked,
+                    "findings": [
+                        {
+                            "id": finding.diagnostic_id,
+                            "severity": "error",
+                            "location": {"path": finding.path, "line": finding.line, "function": finding.function},
+                            "message": finding.message,
+                            "evidence": {"parser": "clang-ast", **finding.evidence},
+                        }
+                        for finding in findings
+                    ],
+                    "contract_trouble": trouble,
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+    print("wrapper-form check")
+    if contract_path is not None:
+        print(f"contract_sha256: {contract_receipt['sha256']}")
+    print(f"functions_checked: {checked}")
+    print(f"findings: {len(findings)}")
+    print(f"contract_trouble: {len(trouble)}")
+    for message in trouble:
+        print(f"P101-WFORM-900: {message}")
+    for finding in findings:
+        print(f"{finding.path}:{finding.line}: {finding.diagnostic_id}: {finding.message} [{finding.function}]")
+
+
 def write_instrumentation(path: Path, records: list[dict[str, Any]]) -> None:
     data = {
         "schema": "p101-instrumentation-coverage-v1",
@@ -712,43 +1124,39 @@ def collect_mutation_candidates(units_and_asts: list[tuple[TranslationUnit, dict
             if kind not in {"BinaryOperator", "CallExpr"}:
                 continue
             file_path, line, _ = spelling_location_with_ancestors(node, ancestors, unit.source, source)
-            if file_path != unit.source or not is_under(file_path, roots):
-                continue
-            offsets = node_range_offsets(node)
-            if offsets is None:
-                continue
-            start, end = offsets
-            if start < 0 or end > len(source) or start >= end:
-                continue
+            admitted = file_path == unit.source and is_under(file_path, roots)
+            offsets = node_range_offsets(node) if admitted else None
+            if offsets is not None:
+                start, end = offsets
+                if start >= 0 and end <= len(source) and start < end:
+                    candidate: MutationCandidate | None = None
+                    if kind == "BinaryOperator" and str(node.get("opcode", "")) in comparison_replacements:
+                        children = [child for child in node.get("inner", []) or [] if isinstance(child, dict)]
+                        if len(children) >= 2:
+                            left_range = node_range_offsets(children[0])
+                            right_range = node_range_offsets(children[1])
+                            if left_range is not None and right_range is not None:
+                                between_start = left_range[1]
+                                between_end = right_range[0]
+                                opcode = str(node["opcode"])
+                                position = source.find(opcode.encode(), between_start, between_end)
+                                if position >= 0:
+                                    candidate = MutationCandidate("comparison-boundary", str(file_path), line, position, position + len(opcode), opcode, comparison_replacements[opcode])
+                    elif kind == "CallExpr":
+                        name = call_name(node)
+                        if name in predicate_replacements:
+                            position = source.find(str(name).encode(), start, end)
+                            if position >= 0:
+                                candidate = MutationCandidate("error-predicate", str(file_path), line, position, position + len(str(name)), str(name), predicate_replacements[str(name)])
+                        elif name in cleanup_calls and ancestors and ancestors[-1].get("kind") == "CompoundStmt":
+                            original = source[start:end].decode("utf-8", errors="strict")
+                            candidate = MutationCandidate("skip-cleanup", str(file_path), line, start, end, original, "(void)0")
 
-            candidate: MutationCandidate | None = None
-            if kind == "BinaryOperator" and str(node.get("opcode", "")) in comparison_replacements:
-                children = [child for child in node.get("inner", []) or [] if isinstance(child, dict)]
-                if len(children) >= 2:
-                    left_range = node_range_offsets(children[0])
-                    right_range = node_range_offsets(children[1])
-                    if left_range is not None and right_range is not None:
-                        between_start = left_range[1]
-                        between_end = right_range[0]
-                        opcode = str(node["opcode"])
-                        position = source.find(opcode.encode(), between_start, between_end)
-                        if position >= 0:
-                            candidate = MutationCandidate("comparison-boundary", str(file_path), line, position, position + len(opcode), opcode, comparison_replacements[opcode])
-            elif kind == "CallExpr":
-                name = call_name(node)
-                if name in predicate_replacements:
-                    position = source.find(str(name).encode(), start, end)
-                    if position >= 0:
-                        candidate = MutationCandidate("error-predicate", str(file_path), line, position, position + len(str(name)), str(name), predicate_replacements[str(name)])
-                elif name in cleanup_calls and ancestors and ancestors[-1].get("kind") == "CompoundStmt":
-                    original = source[start:end].decode("utf-8", errors="strict")
-                    candidate = MutationCandidate("skip-cleanup", str(file_path), line, start, end, original, "(void)0")
-
-            if candidate is not None:
-                key = (candidate.path, candidate.start, candidate.end, candidate.replacement)
-                if key not in seen:
-                    seen.add(key)
-                    candidates.append(candidate)
+                    if candidate is not None:
+                        key = (candidate.path, candidate.start, candidate.end, candidate.replacement)
+                        if key not in seen:
+                            seen.add(key)
+                            candidates.append(candidate)
 
     return sorted(candidates, key=lambda item: (item.path, item.start, item.operator, item.replacement))
 
@@ -1239,20 +1647,21 @@ def collect_module_facts(
     facts: list[tuple[str, Path, int, tuple[object, ...]]] = []
     seen: set[tuple[str, str, int, tuple[object, ...]]] = set()
 
-    for kind, path, line, fields in preprocessing_facts or []:
+    def append_fact(kind: str, path: Path, line: int, fields: tuple[object, ...]) -> None:
         key = (kind, str(path), line, fields)
-        if key not in seen:
-            seen.add(key)
-            facts.append((kind, path, line, fields))
+        if key in seen:
+            return
+        seen.add(key)
+        facts.append((kind, path, line, fields))
+
+    for kind, path, line, fields in preprocessing_facts or []:
+        append_fact(kind, path, line, fields)
 
     for unit, ast in units_and_asts:
         source_bytes = unit.source.read_bytes()
         for path_fact in source_line_facts(unit.source):
             kind, line, fields = path_fact
-            key = (kind, str(unit.source), line, fields)
-            if key not in seen:
-                seen.add(key)
-                facts.append((kind, unit.source, line, fields))
+            append_fact(kind, unit.source, line, fields)
 
         for node, ancestors in iter_nodes_with_ancestors(ast):
             kind = node.get("kind")
@@ -1269,94 +1678,43 @@ def collect_module_facts(
 
             if kind == "FunctionDecl":
                 name = node.get("name")
-                if not name:
-                    continue
-                is_definition = node_has_body(node)
-                if is_definition or is_header:
-                    fields = (str(name), bool_text(node_is_static_function(node)), bool_text(is_header and not is_definition))
-                    key = ("FUNCTION", str(file_path), line, fields)
-                    if key not in seen:
-                        seen.add(key)
-                        facts.append(("FUNCTION", file_path, line, fields))
-                    if function_has_parameter_type(node, "p101_env"):
-                        fields = ("ENV_CONTRACT",)
-                        key = ("NOTE", str(file_path), line, fields)
-                        if key not in seen:
-                            seen.add(key)
-                            facts.append(("NOTE", file_path, line, fields))
-                    if function_has_parameter_type(node, "p101_error"):
-                        fields = ("ERROR_CONTRACT",)
-                        key = ("NOTE", str(file_path), line, fields)
-                        if key not in seen:
-                            seen.add(key)
-                            facts.append(("NOTE", file_path, line, fields))
-                    for note_kind, finding_line in function_error_flow_notes(node, unit, source_bytes):
-                        fields = (note_kind,)
-                        key = ("NOTE", str(file_path), finding_line, fields)
-                        if key not in seen:
-                            seen.add(key)
-                            facts.append(("NOTE", file_path, finding_line, fields))
-                continue
-
-            if kind == "CallExpr":
+                if name:
+                    is_definition = node_has_body(node)
+                    if is_definition or is_header:
+                        fields = (str(name), bool_text(node_is_static_function(node)), bool_text(is_header and not is_definition))
+                        append_fact("FUNCTION", file_path, line, fields)
+                        if function_has_parameter_type(node, "p101_env"):
+                            append_fact("NOTE", file_path, line, ("ENV_CONTRACT",))
+                        if function_has_parameter_type(node, "p101_error"):
+                            append_fact("NOTE", file_path, line, ("ERROR_CONTRACT",))
+                        for note_kind, finding_line in function_error_flow_notes(node, unit, source_bytes):
+                            append_fact("NOTE", file_path, finding_line, (note_kind,))
+            elif kind == "CallExpr":
                 name = call_name(node)
                 if name:
                     needs_env, needs_error = call_contract(node)
                     fields = (name, bool_text(needs_env), bool_text(needs_error))
-                    key = ("CALL", str(file_path), line, fields)
-                    if key not in seen:
-                        seen.add(key)
-                        facts.append(("CALL", file_path, line, fields))
+                    append_fact("CALL", file_path, line, fields)
+                    if call_has_optional_error_annotation(node, source_bytes):
+                        append_fact("NOTE", file_path, line, ("ERROR_OPTIONAL",))
                     if call_discards_error(node):
-                        fields = ("ERROR_DISCARD",)
-                        key = ("NOTE", str(file_path), line, fields)
-                        if key not in seen:
-                            seen.add(key)
-                            facts.append(("NOTE", file_path, line, fields))
+                        append_fact("NOTE", file_path, line, ("ERROR_DISCARD",))
                     if name in {"p101_env_trace", "p101_env_trace_exit"}:
-                        fields = ("TRACE_USE",)
-                        key = ("NOTE", str(file_path), line, fields)
-                        if key not in seen:
-                            seen.add(key)
-                            facts.append(("NOTE", file_path, line, fields))
+                        append_fact("NOTE", file_path, line, ("TRACE_USE",))
                     if is_error_query_name(name):
-                        fields = ("ERROR_CHECK",)
-                        key = ("NOTE", str(file_path), line, fields)
-                        if key not in seen:
-                            seen.add(key)
-                            facts.append(("NOTE", file_path, line, fields))
+                        append_fact("NOTE", file_path, line, ("ERROR_CHECK",))
                     if any(ancestor.get("kind") == "ReturnStmt" for ancestor in ancestors):
-                        fields = ("ERROR_PROPAGATED",)
-                        key = ("NOTE", str(file_path), line, fields)
-                        if key not in seen:
-                            seen.add(key)
-                            facts.append(("NOTE", file_path, line, fields))
-                continue
-
-            if is_header and kind in {"TypedefDecl", "RecordDecl"}:
+                        append_fact("NOTE", file_path, line, ("ERROR_PROPAGATED",))
+            elif is_header and kind in {"TypedefDecl", "RecordDecl"}:
                 name = node.get("name")
                 if name and not node.get("isImplicit", False):
-                    fields = (str(name),)
-                    key = ("TYPE", str(file_path), line, fields)
-                    if key not in seen:
-                        seen.add(key)
-                        facts.append(("TYPE", file_path, line, fields))
-                continue
-
-            if not is_header and kind in {"ParmVarDecl", "VarDecl"}:
+                    append_fact("TYPE", file_path, line, (str(name),))
+            elif not is_header and kind in {"ParmVarDecl", "VarDecl"}:
                 type_text = node_type_text(node)
                 if "p101_env" in type_text:
-                    fields = ("ENV_USE",)
-                    key = ("NOTE", str(file_path), line, fields)
-                    if key not in seen:
-                        seen.add(key)
-                        facts.append(("NOTE", file_path, line, fields))
+                    append_fact("NOTE", file_path, line, ("ENV_USE",))
                 if "p101_error" in type_text:
-                    fields = ("ERROR_USE",)
-                    key = ("NOTE", str(file_path), line, fields)
-                    if key not in seen:
-                        seen.add(key)
-                        facts.append(("NOTE", file_path, line, fields))
+                    append_fact("NOTE", file_path, line, ("ERROR_USE",))
 
     return sorted(facts, key=lambda item: (str(item[1]), item[2], item[0], item[3]))
 
@@ -1443,6 +1801,9 @@ def write_input_manifest(
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    form_findings: list[FormFinding] = []
+    form_trouble: list[str] = []
+    functions_checked = 0
     if args.timeout <= 0:
         print("p101-wrapper-audit: --timeout must be greater than zero", file=sys.stderr)
         return 2
@@ -1452,6 +1813,19 @@ def main(argv: list[str]) -> int:
     if args.emit_module_facts and args.facts_output is not None:
         print("p101-wrapper-audit: --emit-module-facts and --facts-output are mutually exclusive", file=sys.stderr)
         return 2
+    if args.wrapper_form_only and args.wrapper_form_contract is None:
+        print("p101-wrapper-audit: --wrapper-form-only requires --wrapper-form-contract", file=sys.stderr)
+        return 2
+    if args.json and args.wrapper_form_contract is not None and not args.wrapper_form_only:
+        print("p101-wrapper-audit: JSON wrapper-form output requires --wrapper-form-only", file=sys.stderr)
+        return 2
+    form_contract: dict[str, Any] | None = None
+    if args.wrapper_form_contract is not None:
+        try:
+            form_contract = load_wrapper_form_contract(args.wrapper_form_contract)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            print(f"p101-wrapper-audit: invalid wrapper form contract: {exc}", file=sys.stderr)
+            return 2
     try:
         allowed = set(args.allow)
         allow_rules = load_allow_files(args.allow_file)
@@ -1473,7 +1847,7 @@ def main(argv: list[str]) -> int:
         print_inventory_json(inventory)
         return 0
 
-    if not args.emit_module_facts and not inventory:
+    if not args.emit_module_facts and not args.wrapper_form_only and not inventory:
         print("p101-wrapper-audit: wrapper inventory is empty", file=sys.stderr)
         print("p101-wrapper-audit: pass --header-root or install/build the p101 wrapper headers first.", file=sys.stderr)
         return 2
@@ -1562,6 +1936,14 @@ def main(argv: list[str]) -> int:
             print(f"p101-wrapper-audit: could not write mutation candidates: {exc}", file=sys.stderr)
             return 2
 
+    if form_contract is not None:
+        form_findings, functions_checked, form_trouble = check_wrapper_forms(collect_function_forms(units_and_asts, paths), form_contract)
+        if args.wrapper_form_only:
+            print_wrapper_form_results(form_findings, functions_checked, form_trouble, args.json, args.wrapper_form_contract)
+            if parse_failures or form_trouble:
+                return 2
+            return 1 if form_findings else 0
+
     local_functions = collect_local_functions(units_and_asts, paths)
     findings = collect_findings(units_and_asts, paths, local_functions, inventory, allowed, allow_rules)
 
@@ -1575,12 +1957,18 @@ def main(argv: list[str]) -> int:
         print_json(findings, parse_failures)
     else:
         print_text(findings, parse_failures)
+    if form_contract is not None:
+        print_wrapper_form_results(form_findings, functions_checked, form_trouble, args.json, args.wrapper_form_contract)
 
     missed = any(finding.kind == "missed-wrapper" for finding in findings)
     external = any(finding.kind == "external-call" for finding in findings)
     indirect = any(finding.kind == "indirect-call" for finding in findings)
     if parse_failures:
         return 2
+    if form_trouble:
+        return 2
+    if form_findings:
+        return 1
     if missed or (args.strict_external and (external or indirect)):
         return 1
     return 0

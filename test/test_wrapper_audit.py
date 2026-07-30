@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -13,7 +15,10 @@ TOOL = ROOT / "p101-wrapper-audit"
 
 
 def run_tool(*args: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run([str(TOOL), *args], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    command = [sys.executable, str(TOOL), *args]
+    if os.environ.get("P101_COVERAGE") == "1":
+        command = [sys.executable, "-m", "coverage", "run", "--parallel-mode", str(TOOL), *args]
+    return subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
 def test_missed_wrapper_and_local_function() -> None:
@@ -880,6 +885,99 @@ def test_error_flow_checks_the_matching_error_object() -> None:
         assert "\t10\tERROR_UNCHECKED_CHAIN" in chain_notes[0]
 
 
+def test_multiline_optional_error_annotation_uses_call_start_line() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        source = Path(tmp) / "optional.c"
+        source.write_text(
+            """
+            struct p101_env;
+            struct p101_error;
+            int p101_format(const struct p101_env *, struct p101_error *, char *, int);
+            void format(const struct p101_env *env, char *output) {
+                p101_format(env,
+                            0,
+                            output,
+                            16); /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: bounded diagnostic. */
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        result = run_tool("--emit-module-facts", str(source))
+
+        assert result.returncode == 0, result.stderr + result.stdout
+        optional_notes = [line for line in result.stdout.splitlines() if "\tERROR_OPTIONAL" in line]
+        assert any("\t6\tERROR_OPTIONAL" in line for line in optional_notes)
+
+
+def test_generic_wrapper_form_contract_checks_shape_and_native_signature() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        source = root / "wrapper.c"
+        contract = root / "wrapper-contract.json"
+        source.write_text(
+            """
+            struct app_context;
+            struct app_error;
+            int native_open(const char *path, int flags);
+            void trace_enter(const struct app_context *context);
+            void trace_exit(const struct app_context *context);
+            int inject_fault(const struct app_context *context);
+
+            int wrap_open(const struct app_context *context,
+                          struct app_error *error,
+                          const char *path,
+                          int flags)
+            {
+                trace_enter(context);
+                (void)error;
+                (void)inject_fault(context);
+                int result = native_open(path, flags);
+                trace_exit(context);
+                return result;
+            }
+            """,
+            encoding="utf-8",
+        )
+        contract.write_text(
+            json.dumps(
+                {
+                    "schema": "p101-wrapper-form-contract-v1",
+                    "selector": {"include": "^wrap_", "public_only": True, "minimum_matches": 1},
+                    "mapping": {"strip_prefix": "wrap_"},
+                    "context_parameter": {"index": 0, "type_contains": "app_context", "mode": "required"},
+                    "error_parameter": {"index": 1, "type_contains": "app_error", "mode": "optional"},
+                    "requirements": {
+                        "balanced_trace": True,
+                        "fault": "when-error",
+                        "target_required": True,
+                        "target_call_count": 1,
+                        "compare_target_signature": True,
+                    },
+                    "instrumentation_calls": {
+                        "trace_entry": ["trace_enter"],
+                        "trace_exit": ["trace_exit"],
+                        "fault": ["inject_fault"],
+                    },
+                    "overrides": [{"match": "^wrap_open$", "target": "native_open"}],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        clean = run_tool("--wrapper-form-contract", str(contract), "--wrapper-form-only", str(source))
+        assert clean.returncode == 0, clean.stderr + clean.stdout
+        assert "functions_checked: 1" in clean.stdout
+        assert "findings: 0" in clean.stdout
+
+        source.write_text(source.read_text(encoding="utf-8").replace("trace_exit(context);", ""), encoding="utf-8")
+        broken = run_tool("-j", "--wrapper-form-contract", str(contract), "--wrapper-form-only", str(source))
+        assert broken.returncode == 1, broken.stderr + broken.stdout
+        data = json.loads(broken.stdout)
+        assert data["schema"] == "p101-wrapper-form-findings-v1"
+        assert any(finding["id"] == "P101-WFORM-004" for finding in data["findings"])
+
+
 def main() -> int:
     tests = [
         test_missed_wrapper_and_local_function,
@@ -919,6 +1017,8 @@ def main() -> int:
         test_mutation_candidates_use_clang_locations,
         test_error_flow_facts_split_if_branches_and_find_reachable_chains,
         test_error_flow_checks_the_matching_error_object,
+        test_multiline_optional_error_annotation_uses_call_start_line,
+        test_generic_wrapper_form_contract_checks_shape_and_native_signature,
     ]
     for test in tests:
         test()
