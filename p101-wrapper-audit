@@ -1,12 +1,16 @@
-#!/usr/bin/env python3
-"""Wrapper-boundary policy frontend over the shared Clang fact pipeline."""
+#!/usr/bin/env bash
+set -euo pipefail
 
-from __future__ import annotations
-
-import sys
-
-from p101_wrapper_audit import main
-
-
-if __name__ == "__main__":
-    raise SystemExit(main(sys.argv[1:], facts_only=False))
+root="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+build_dir=""
+if [ -f "$root/.last-build-dir" ]; then
+    build_dir="$(cat "$root/.last-build-dir")"
+fi
+for candidate in "$build_dir" build-clang build-clang-22 build; do
+    [ -n "$candidate" ] || continue
+    if [ -x "$root/$candidate/p101-wrapper-audit" ]; then
+        exec "$root/$candidate/p101-wrapper-audit" "$@"
+    fi
+done
+echo "p101-wrapper-audit: native executable not built; run ./change-compiler.sh and ./build.sh" >&2
+exit 2

@@ -3,10 +3,11 @@
 `p101-wrapper-audit` finds calls that cross outside the local/p101 wrapper
 boundary.
 
-It uses Clang's real C/C++ parser, not a token scanner:
+It is a native C program built on `lib_c_facts` and libclang, not a token
+scanner or a Python/AST-JSON adapter:
 
 1. inventory wrapped functions from installed/local `p101_*` headers;
-2. parse source translation units with `clang -Xclang -ast-dump=json`;
+2. parse source translation units directly with libclang;
 3. collect functions defined inside the audited roots;
 4. report calls to functions that are neither local nor `p101_*`, plus
    indirect function-pointer calls where the static target cannot be proven.
@@ -43,9 +44,7 @@ Options:
   exceptions are removed.
 - `--cflag FLAG` adds a compiler flag for files not present in a compile
   database; may be repeated.
-- `--clang clang-22` uses a specific Clang.
 - `--header-root DIR` adds a p101 header inventory root.
-- `--timeout SECONDS` sets the per-translation-unit Clang AST timeout.
 - `--keep-going` continues after translation-unit parse failures, reports the
   skipped files, and still exits non-clean so incomplete audits cannot pass
   silently.
@@ -56,20 +55,22 @@ Options:
   [docs/module-facts.md](docs/module-facts.md).
 - `--facts-output FILE` writes the same P101FACT v2 snapshot while the wrapper
   audit runs, so later policy tools reuse the exact AST evidence.
-- `--input-manifest FILE` writes a JSON receipt containing the compiler,
-  compile-database and fact hashes, discovered/active/parsed files, inactive
-  sources, parse failures, allowed callees, and hashes of scoped boundary-rule
-  files.
+- `--input-manifest FILE` writes a JSON receipt containing the selected compile
+  database and modes, explicit paths, header roots, extra parser arguments,
+  boundary-rule files, parsed translation units, inventory/rule/fact counts,
+  and parse failures. It records admitted inputs; it does not pretend to be a
+  content-addressed source archive.
+- `--instrumentation-output FILE` writes
+  `p101-instrumentation-coverage-v1`: one record per public or private
+  `p101_*` definition with its env/error contract and tracing, fault-injection,
+  descriptor, allocation, and generic-resource capabilities. Capabilities
+  supplied by same-file helpers are propagated to their callers.
+- `--mutation-candidates-output FILE` writes exact libclang source ranges and
+  replacements using `p101-mutation-candidates-v2`.
 - `--check-portability-includes` rejects known OS-specific headers such as
   `linux/*`, `mach/*`, and `sys/event.h`. This source-boundary policy lives
   here rather than in the structural module mapper because it is a judgment
   about the headers admitted at the portable wrapper boundary.
-- `--wrapper-form-contract FILE` checks selected definitions against a
-  project-owned structural wrapper contract.
-- `--wrapper-form-only` skips the p101 boundary inventory and emits only the
-  wrapper-form result. This is the normal mode for projects whose wrappers do
-  not use the `p101_` prefix. With `-j`, it emits
-  `p101-wrapper-form-findings-v1` JSON.
 
 Examples:
 
@@ -77,12 +78,10 @@ Examples:
 ./p101-wrapper-audit ../simple-port-forwarder/src
 ./p101-wrapper-audit -j --compile-db ../simple-port-forwarder/build-clang/compile_commands.json ../simple-port-forwarder
 ./p101-wrapper-audit --cflag=-Iinclude src
-./p101-wrapper-audit --keep-going --timeout 60 --cflag=-Iinclude src
+./p101-wrapper-audit --keep-going --cflag=-Iinclude src
 ./p101-wrapper-audit --emit-module-facts --cflag=-Iinclude src include
 ./p101-wrapper-audit --facts-output facts.tsv --input-manifest inputs.json src include
 ./p101-wrapper-audit --check-portability-includes --compile-db build/compile_commands.json .
-./p101-wrapper-audit --wrapper-form-contract wrapper-form-contract.json --wrapper-form-only \
-  --compile-db build/compile_commands.json --compile-db-only .
 ./p101-wrapper-audit -e -a TEST_ASSERT_EQUAL_INT test src
 ```
 
@@ -92,12 +91,11 @@ would otherwise make direct calls look harmless.
 
 ## Fact-production boundary
 
-`p101-c-facts` is the dedicated fact-producing command in this repository. It
-imports the shared `p101_wrapper_audit` acquisition module directly, accepts
-the same source-discovery, compile-database, Clang, timeout, and keep-going
-options, and emits only the `P101FACT` stream. It is a deliberately thin front
-end over the same Clang acquisition pipeline, not a subprocess alias for the
-wrapper-policy command.
+`p101-c-facts` is the dedicated native fact-producing command in this
+repository. It calls `lib_c_facts` directly, accepts the same source-discovery,
+compile-database, compiler-argument, and keep-going options, and emits only the
+`P101FACT` stream. It is a deliberately thin front end over the same libclang
+acquisition pipeline, not a subprocess alias for the wrapper-policy command.
 
 `p101-wrapper-audit` remains able to write a fact snapshot during its policy
 pass with `--facts-output`; `p101-doctor` uses that path to avoid parsing every
@@ -128,17 +126,6 @@ It cannot see:
 For teaching, that is the intended ceiling: the audit tells students whether
 their code follows the wrapper contract. Pair it with `p101-observe`,
 `p101-resource-tracker`, and sanitizers for runtime behavior.
-
-## Wrapper-form contracts
-
-Wrapper-form checking is project-neutral. A contract selects wrapper names and
-declares context/error parameter positions, target-name mapping, tracing,
-fault-injection, signature, and lifecycle-hook requirements. Projects may name
-their own instrumentation calls; p101 names are only the built-in default.
-
-See [docs/wrapper-form-contract.md](docs/wrapper-form-contract.md) for the
-schema, diagnostics, example, and limits. The check uses the same Clang AST
-pass that produces P101FACT snapshots; it does not contain another C parser.
 
 ## Exit status
 

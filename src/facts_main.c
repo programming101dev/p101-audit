@@ -1,0 +1,62 @@
+#include "cli.h"
+#include "model.h"
+#include "output.h"
+#include <p101_c/p101_stdio.h>
+#include <p101_c/p101_stdlib.h>
+#include <p101_c/p101_string.h>
+
+enum
+{
+    EXIT_TROUBLE = 2
+};
+
+int main(int argc, char *argv[])
+{
+    struct p101_error            *err;
+    struct p101_env              *env;
+    struct p101_wrapper_arguments arguments;
+    struct p101_wrapper_model     model;
+    int                           status;
+    bool                          help;
+
+    err    = p101_error_create(false);
+    env    = p101_env_create(err, NULL);
+    status = EXIT_TROUBLE;
+    help   = false;
+    if(argc == 2 && (p101_strcmp(env, argv[1], "-h") == 0 || p101_strcmp(env, argv[1], "--help") == 0))
+    {
+        help = true;
+    }
+    p101_wrapper_model_init(&model);
+    if(!p101_wrapper_parse_arguments(env, err, argc, argv, &arguments, true))
+    {
+        p101_wrapper_usage(env, NULL, argv[0], true);
+        if(help)
+        {
+            status = EXIT_SUCCESS;
+        }
+        goto done;
+    }
+    if(!p101_wrapper_model_scan(env, err, &model, &arguments))
+    {
+        goto done;
+    }
+    p101_wrapper_write_facts(env, err, &model, stdout);
+    p101_wrapper_write_diagnostics(env, err, &model, stderr);
+    status = EXIT_TROUBLE;
+    if(p101_error_has_no_error(err) && model.parse_failures == 0U)
+    {
+        status = EXIT_SUCCESS;
+    }
+
+done:
+    if(p101_error_has_error(err))
+    {
+        p101_fprintf(env, NULL, stderr, "p101-c-facts: %s\n", p101_error_get_message(err));
+        status = EXIT_TROUBLE;
+    }
+    p101_wrapper_model_destroy(env, &model);
+    p101_env_destroy(env);
+    p101_error_destroy(err);
+    return status;
+}

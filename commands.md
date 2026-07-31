@@ -1,12 +1,12 @@
 # Commands
 
-Quick reference for `p101-wrapper-audit`. This tool is Python/Clang based, so
-`./build.sh` byte-compiles the script and tests instead of compiling C.
+Quick reference for the native C `p101-wrapper-audit`, backed by
+`lib_c_facts` and libclang.
 
 | Command | What it does |
 | --- | --- |
-| `./build.sh` | Byte-compile the tool and tests |
-| `./test.sh` | Run the Python unit tests |
+| `./build.sh` | Build the native commands and strict analysis targets |
+| `./test.sh` | Run the native CLI regression tests |
 | `./check.sh` | Run the local gate |
 | `./p101-wrapper-audit src include` | Find calls that bypass available p101 wrappers, with replacement hints |
 | `./p101-wrapper-audit --compile-db compile_commands.json src include` | Audit with exact compiler flags from a compile database |
