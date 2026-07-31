@@ -22,6 +22,13 @@ def run_tool(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
+def run_fact_tool(*args: str) -> subprocess.CompletedProcess[str]:
+    command = [sys.executable, str(FACT_TOOL), *args]
+    if os.environ.get("P101_COVERAGE") == "1":
+        command = [sys.executable, "-m", "coverage", "run", "--parallel-mode", str(FACT_TOOL), *args]
+    return subprocess.run(command, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+
 def test_missed_wrapper_and_local_function() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "main.c"
@@ -1001,7 +1008,7 @@ def test_dedicated_fact_command() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         source = Path(tmp) / "main.c"
         source.write_text("static int answer(void) { return 42; }\n", encoding="utf-8")
-        result = subprocess.run([str(FACT_TOOL), str(source)], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        result = run_fact_tool(str(source))
         assert result.returncode == 0, result.stderr + result.stdout
         assert result.stdout.startswith("P101FACT\t2\t")
         assert "\tFUNCTION\t" in result.stdout

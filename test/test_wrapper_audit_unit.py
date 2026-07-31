@@ -15,7 +15,7 @@ from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TOOL = ROOT / "p101-wrapper-audit"
+TOOL = ROOT / "p101_wrapper_audit.py"
 
 
 def load_tool():

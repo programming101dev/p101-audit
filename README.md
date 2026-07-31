@@ -93,10 +93,11 @@ would otherwise make direct calls look harmless.
 ## Fact-production boundary
 
 `p101-c-facts` is the dedicated fact-producing command in this repository. It
-accepts the same source-discovery, compile-database, Clang, timeout, and
-keep-going options and emits only the `P101FACT` stream. It is a deliberately
-thin front end over the same Clang acquisition pipeline, so consumers do not
-need to pretend that wrapper policy owns C parsing.
+imports the shared `p101_wrapper_audit` acquisition module directly, accepts
+the same source-discovery, compile-database, Clang, timeout, and keep-going
+options, and emits only the `P101FACT` stream. It is a deliberately thin front
+end over the same Clang acquisition pipeline, not a subprocess alias for the
+wrapper-policy command.
 
 `p101-wrapper-audit` remains able to write a fact snapshot during its policy
 pass with `--facts-output`; `p101-doctor` uses that path to avoid parsing every
