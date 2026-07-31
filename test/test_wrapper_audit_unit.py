@@ -266,7 +266,7 @@ def test_instrumentation_and_ast_helpers() -> None:
         unit = tool.TranslationUnit(source, None, root)
         records = tool.collect_instrumentation([(unit, ast)], [root])
         record = next(item for item in records if item["function"] == "p101_work")
-        assert record["trace_entry"] and record["fault"] and record["has_env"] and record["has_error"]
+        assert record["trace_entry"] and record["fault"] and record["has_env"] and record["has_error"] and record["public"]
         output = root / "instrumentation.json"
         tool.write_instrumentation(output, records)
         assert json.loads(output.read_text(encoding="utf-8"))["functions"] == records

@@ -694,6 +694,7 @@ def collect_instrumentation(units_and_asts: list[tuple[TranslationUnit, dict[str
                 "path": str(file_path),
                 "line": line,
                 "function": name,
+                "public": not node_is_static_function(node),
                 "has_env": function_has_parameter_type(node, "p101_env"),
                 "has_error": function_has_parameter_type(node, "p101_error"),
             }

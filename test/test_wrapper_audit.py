@@ -68,6 +68,7 @@ def test_external_inventory_does_not_fail_by_default() -> None:
         result = run_tool(str(source))
         assert result.returncode == 0, result.stderr + result.stdout
         assert "external-call: third_party" in result.stdout
+        assert "P101-WRAP-002" in result.stdout
 
 
 def test_simple_local_function_pointer_target_is_resolved() -> None:
@@ -108,6 +109,7 @@ def test_unresolved_function_pointer_parameter_remains_boundary() -> None:
         result = run_tool(str(source))
         assert result.returncode == 0, result.stderr + result.stdout
         assert "indirect-call: operation" in result.stdout
+        assert "P101-WRAP-003" in result.stdout
 
 
 def test_bool_returning_local_function_is_not_external() -> None:
@@ -519,6 +521,7 @@ def test_keep_going_reports_partial_results_and_parse_failures() -> None:
         assert continued.returncode == 2
         assert "skipped" in continued.stderr
         assert "parse_failures: 1" in continued.stdout
+        assert "P101-WRAP-900" in continued.stdout
         assert "missed-wrapper: malloc" in continued.stdout
 
 
@@ -642,7 +645,7 @@ def test_module_fact_output_uses_clang_ast_for_c_facts() -> None:
             #include <stdio.h>
             #include <p101_env/env.h>
             #include <p101_error/error.h>
-            #include <p101_posix/p101_unistd.h>
+            #include <p101_filesystem/filesystem.h>
             static int helper(int value) { return value + 1; }
             static void traced(const struct p101_env *env, struct p101_error *err) {
                 P101_TRACE(env);
