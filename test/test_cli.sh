@@ -105,6 +105,34 @@ printf '*:local:external_boundary\n' >"$work/allow.rules"
 "$audit" --strict-external --allow malloc --allow free \
     --allow-file "$work/allow.rules" "$work" >/dev/null
 
+cat >"$work/builtin-format.c" <<'SOURCE'
+#include <stdarg.h>
+#include <stdio.h>
+
+static int format_text(char *buffer, size_t size, const char *format, ...)
+{
+    int result;
+    va_list arguments;
+    va_list copy;
+
+    va_start(arguments, format);
+    va_copy(copy, arguments);
+    result = vsnprintf(buffer, size, format, copy);
+    va_end(copy);
+    va_end(arguments);
+    return result;
+}
+SOURCE
+cat >"$work/builtin-format.rules" <<'RULES'
+*:format_text:va_start
+*:format_text:va_copy
+*:format_text:vsnprintf
+*:format_text:va_end
+RULES
+"$audit" --strict-external --allow-file "$work/builtin-format.rules" \
+    "$work/builtin-format.c" >/dev/null
+rm -f "$work/builtin-format.c" "$work/builtin-format.rules"
+
 printf '*:missing:external_boundary\n' >"$work/stale.rules"
 set +e
 "$audit" --allow malloc --allow free --allow-file "$work/stale.rules" \

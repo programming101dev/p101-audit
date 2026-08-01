@@ -51,16 +51,20 @@ static const char *canonical_callee(const struct p101_env *env, const char *name
         const char *lowered;
         const char *source;
     } mappings[] = {
-        {"__builtin___fprintf_chk",  "fprintf" },
-        {"__builtin___memcpy_chk",   "memcpy"  },
-        {"__builtin___memmove_chk",  "memmove" },
-        {"__builtin___memset_chk",   "memset"  },
-        {"__builtin___printf_chk",   "printf"  },
-        {"__builtin___snprintf_chk", "snprintf"},
-        {"__builtin___strcpy_chk",   "strcpy"  },
-        {"__builtin_memcpy",         "memcpy"  },
-        {"__builtin_memmove",        "memmove" },
-        {"__builtin_memset",         "memset"  },
+        {"__builtin___fprintf_chk",   "fprintf"  },
+        {"__builtin___memcpy_chk",    "memcpy"   },
+        {"__builtin___memmove_chk",   "memmove"  },
+        {"__builtin___memset_chk",    "memset"   },
+        {"__builtin___printf_chk",    "printf"   },
+        {"__builtin___snprintf_chk",  "snprintf" },
+        {"__builtin___strcpy_chk",    "strcpy"   },
+        {"__builtin___vsnprintf_chk", "vsnprintf"},
+        {"__builtin_memcpy",          "memcpy"   },
+        {"__builtin_memmove",         "memmove"  },
+        {"__builtin_memset",          "memset"   },
+        {"__builtin_va_copy",         "va_copy"  },
+        {"__builtin_va_end",          "va_end"   },
+        {"__builtin_va_start",        "va_start" },
     };
 
     size_t index;
