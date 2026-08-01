@@ -133,6 +133,26 @@ RULES
     "$work/builtin-format.c" >/dev/null
 rm -f "$work/builtin-format.c" "$work/builtin-format.rules"
 
+cat >"$work/macro-wrapper.c" <<'SOURCE'
+#include <stddef.h>
+void *native_allocate(size_t size);
+#define malloc(size) native_allocate(size)
+
+void *allocate_one(void)
+{
+    return malloc(1);
+}
+SOURCE
+set +e
+"$audit" "$work/macro-wrapper.c" >"$work/macro-wrapper.out" 2>"$work/macro-wrapper.err"
+status=$?
+set -e
+[ "$status" -eq 1 ]
+grep -q 'malloc -> p101_malloc' "$work/macro-wrapper.out"
+printf '*:*:malloc\n' >"$work/macro-wrapper.rules"
+"$audit" --allow-file "$work/macro-wrapper.rules" "$work/macro-wrapper.c" >/dev/null
+rm -f "$work/macro-wrapper.c" "$work/macro-wrapper.rules"
+
 printf '*:missing:external_boundary\n' >"$work/stale.rules"
 set +e
 "$audit" --allow malloc --allow free --allow-file "$work/stale.rules" \

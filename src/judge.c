@@ -229,21 +229,31 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
                 return false;
             }
         }
-        else if(fact->kind == P101_C_ANALYSIS_CALL)
+        else if(fact->kind == P101_C_ANALYSIS_CALL || (fact->kind == P101_C_ANALYSIS_MACRO && !fact->is_definition))
         {
             const char *name;
             const char *wrapper;
 
-            name = canonical_callee(env, fact->name);
+            name    = canonical_callee(env, fact->name);
+            wrapper = find_wrapper(env, model, name);
+            /*
+             * Function-like libc APIs are macros on some platforms. Treat a
+             * macro invocation as a boundary operation only when the wrapper
+             * inventory knows that API; arbitrary project macros are not
+             * external calls.
+             */
+            if(fact->kind == P101_C_ANALYSIS_MACRO && wrapper == NULL)
+            {
+                continue;
+            }
             if(name[0] == '\0' || p101_strncmp(env, name, "p101_", sizeof("p101_") - 1U) == 0 || p101_strncmp(env, name, "P101_", sizeof("P101_") - 1U) == 0 || p101_strncmp(env, name, "__", sizeof("__") - 1U) == 0 || is_local(env, model, name) ||
                is_allowed(env, arguments, fact, name))
             {
                 continue;
             }
-            wrapper = NULL;
-            if(!fact->is_indirect)
+            if(fact->is_indirect)
             {
-                wrapper = find_wrapper(env, model, name);
+                wrapper = NULL;
             }
             if(wrapper != NULL && p101_strcmp(env, fact->caller, wrapper) == 0)
             {

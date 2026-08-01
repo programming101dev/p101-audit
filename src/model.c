@@ -2,6 +2,7 @@
 #include <p101_c/p101_stdio.h>
 #include <p101_c/p101_stdlib.h>
 #include <p101_c/p101_string.h>
+#include <stdint.h>
 
 enum
 {
@@ -9,6 +10,7 @@ enum
 };
 
 static void deduplicate_facts(const struct p101_env *env, struct p101_wrapper_model *model);
+static void assign_macro_callers(const struct p101_env *env, struct p101_wrapper_model *model);
 
 void p101_wrapper_model_init(struct p101_wrapper_model *model)
 {
@@ -120,8 +122,67 @@ bool p101_wrapper_model_scan(const struct p101_env *env, struct p101_error *err,
     {
         return false;
     }
+    assign_macro_callers(env, model);
     deduplicate_facts(env, model);
     return true;
+}
+
+static void assign_macro_callers(const struct p101_env *env, struct p101_wrapper_model *model)
+{
+    size_t macro_index;
+
+    P101_TRACE_SCOPE(env);
+    for(macro_index = 0U; macro_index < model->fact_count; macro_index++)
+    {
+        struct p101_wrapper_fact *macro;
+        size_t                    function_index;
+        size_t                    narrowest_span;
+
+        macro = &model->facts[macro_index];
+        if(macro->kind != P101_C_ANALYSIS_MACRO || macro->is_definition || macro->caller[0] != '\0')
+        {
+            continue;
+        }
+        /*
+         * A function-like macro commonly lowers to a call expression at the
+         * same spelling location. That call retains its semantic caller even
+         * when the preprocessing cursor itself is attached to the translation
+         * unit.
+         */
+        for(function_index = 0U; function_index < model->fact_count; function_index++)
+        {
+            const struct p101_wrapper_fact *call;
+
+            call = &model->facts[function_index];
+            if(call->kind == P101_C_ANALYSIS_CALL && call->line == macro->line && call->caller[0] != '\0' && p101_strcmp(env, call->path, macro->path) == 0)
+            {
+                copy_field(env, macro->caller, sizeof(macro->caller), call->caller);
+                break;
+            }
+        }
+        if(macro->caller[0] != '\0')
+        {
+            continue;
+        }
+        narrowest_span = SIZE_MAX;
+        for(function_index = 0U; function_index < model->fact_count; function_index++)
+        {
+            const struct p101_wrapper_fact *function;
+            size_t                          span;
+
+            function = &model->facts[function_index];
+            if(function->kind != P101_C_ANALYSIS_FUNCTION || !function->is_definition || p101_strcmp(env, function->path, macro->path) != 0 || function->start > macro->start || function->end < macro->end)
+            {
+                continue;
+            }
+            span = function->end - function->start;
+            if(span < narrowest_span)
+            {
+                copy_field(env, macro->caller, sizeof(macro->caller), function->name);
+                narrowest_span = span;
+            }
+        }
+    }
 }
 
 static int compare_size(size_t left, size_t right)
