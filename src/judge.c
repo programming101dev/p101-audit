@@ -95,6 +95,46 @@ static const char *find_wrapper(const struct p101_env *env, const struct p101_wr
     return NULL;
 }
 
+static bool is_wrapper_implementation(const struct p101_env *env, const char *caller, const char *name, const char *wrapper)
+{
+    static const struct
+    {
+        const char *lowered;
+        const char *wrapper;
+    } aliases[] = {
+        {"fgetc",  "p101_getc"    },
+        {"fgetc",  "p101_getchar" },
+        {"fgetwc", "p101_getwc"   },
+        {"fgetwc", "p101_getwchar"},
+        {"fputc",  "p101_putc"    },
+        {"fputc",  "p101_putchar" },
+        {"fputwc", "p101_putwc"   },
+        {"fputwc", "p101_putwchar"},
+    };
+
+    size_t index;
+
+    P101_TRACE_SCOPE(env);
+    if(wrapper != NULL && p101_strcmp(env, caller, wrapper) == 0)
+    {
+        return true;
+    }
+    /*
+     * The C standard permits the getc/putc families to be macros. Several
+     * libcs lower those aliases to their fgetc/fputc counterparts, so the AST
+     * names the implementation function rather than the API written in the
+     * wrapper source.
+     */
+    for(index = 0U; index < sizeof(aliases) / sizeof(aliases[0]); index++)
+    {
+        if(p101_strcmp(env, name, aliases[index].lowered) == 0 && p101_strcmp(env, caller, aliases[index].wrapper) == 0)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool is_local(const struct p101_env *env, const struct p101_wrapper_model *model, const char *name)
 {
     size_t index;
@@ -255,7 +295,7 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
             {
                 wrapper = NULL;
             }
-            if(wrapper != NULL && p101_strcmp(env, fact->caller, wrapper) == 0)
+            if(is_wrapper_implementation(env, fact->caller, name, wrapper))
             {
                 continue;
             }

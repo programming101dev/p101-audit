@@ -153,6 +153,17 @@ printf '*:*:malloc\n' >"$work/macro-wrapper.rules"
 "$audit" --allow-file "$work/macro-wrapper.rules" "$work/macro-wrapper.c" >/dev/null
 rm -f "$work/macro-wrapper.c" "$work/macro-wrapper.rules"
 
+cat >"$work/macro-wrapper-implementation.c" <<'SOURCE'
+#define atomic_load(object) (*(object))
+
+unsigned int p101_atomic_uint_load(const unsigned int *object)
+{
+    return atomic_load(object);
+}
+SOURCE
+"$audit" "$work/macro-wrapper-implementation.c" >/dev/null
+rm -f "$work/macro-wrapper-implementation.c"
+
 printf '*:missing:external_boundary\n' >"$work/stale.rules"
 set +e
 "$audit" --allow malloc --allow free --allow-file "$work/stale.rules" \
