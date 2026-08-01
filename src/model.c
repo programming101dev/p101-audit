@@ -171,7 +171,8 @@ static void assign_macro_callers(const struct p101_env *env, struct p101_wrapper
             size_t                          span;
 
             function = &model->facts[function_index];
-            if(function->kind != P101_C_ANALYSIS_FUNCTION || !function->is_definition || p101_strcmp(env, function->path, macro->path) != 0 || function->start > macro->start || function->end < macro->end)
+            if(function->kind != P101_C_ANALYSIS_FUNCTION || !function->is_definition || function->end < function->start || macro->end < macro->start || p101_strcmp(env, function->path, macro->path) != 0 || function->start > macro->start ||
+               function->end < macro->end)
             {
                 continue;
             }
