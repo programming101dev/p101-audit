@@ -12,7 +12,7 @@ static void deduplicate_facts(const struct p101_env *env, struct p101_wrapper_mo
 
 void p101_wrapper_model_init(struct p101_wrapper_model *model)
 {
-    *model = (struct p101_wrapper_model){0};
+    *model = (struct p101_wrapper_model){.facts = NULL};
 }
 
 void p101_wrapper_model_destroy(const struct p101_env *env, struct p101_wrapper_model *model)
