@@ -30,11 +30,19 @@ static bool inventory_has_original(const struct p101_env *env, const struct p101
 
 static void copy_field(const struct p101_env *env, char *destination, size_t size, const char *source)
 {
+    size_t length;
+
     P101_TRACE_SCOPE(env);
     destination[0] = '\0';
     if(source != NULL)
     {
-        p101_snprintf(env, NULL, destination, size, "%s", source);
+        length = p101_strlen(env, source);
+        if(length >= size)
+        {
+            length = size - 1U;
+        }
+        p101_memcpy(env, destination, source, length);
+        destination[length] = '\0';
     }
 }
 
@@ -212,6 +220,7 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
     size_t attempt;
 
     P101_TRACE_SCOPE(env);
+    /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: discovery probes candidate roots. */
     if(program_path != NULL && p101_realpath(env, NULL, program_path, current) != NULL)
     {
         const char *slash;
@@ -222,6 +231,7 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
             current[(size_t)(slash - current)] = '\0';
         }
     }
+    /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: discovery failure is returned as false. */
     else if(p101_getcwd(env, NULL, current, sizeof(current)) == NULL)
     {
         return false;
@@ -231,7 +241,9 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
         struct stat status;
         const char *slash;
 
+        /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: an empty path rejects this discovery candidate. */
         p101_snprintf(env, NULL, path, size, "%s/libraries", current);
+        /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: discovery probes candidate roots. */
         if(p101_stat(env, NULL, path, &status) == 0 && S_ISDIR(status.st_mode))
         {
             return true;

@@ -26,11 +26,19 @@ void p101_wrapper_model_destroy(const struct p101_env *env, struct p101_wrapper_
 
 static void copy_field(const struct p101_env *env, char *destination, size_t size, const char *source)
 {
+    size_t length;
+
     P101_TRACE_SCOPE(env);
     destination[0] = '\0';
     if(source != NULL)
     {
-        p101_snprintf(env, NULL, destination, size, "%s", source);
+        length = p101_strlen(env, source);
+        if(length >= size)
+        {
+            length = size - 1U;
+        }
+        p101_memcpy(env, destination, source, length);
+        destination[length] = '\0';
     }
 }
 
@@ -129,6 +137,24 @@ static int compare_size(size_t left, size_t right)
     return 0;
 }
 
+static int compare_text(const char *left, const char *right)
+{
+    while(*left != '\0' && *right != '\0' && *left == *right)
+    {
+        left++;
+        right++;
+    }
+    if((unsigned char)*left < (unsigned char)*right)
+    {
+        return -1;
+    }
+    if((unsigned char)*left > (unsigned char)*right)
+    {
+        return 1;
+    }
+    return 0;
+}
+
 static int compare_facts(const void *left, const void *right)
 {
     const struct p101_wrapper_fact *a;
@@ -137,7 +163,7 @@ static int compare_facts(const void *left, const void *right)
 
     a      = (const struct p101_wrapper_fact *)left;
     b      = (const struct p101_wrapper_fact *)right;
-    result = p101_strcmp(NULL, a->path, b->path);
+    result = compare_text(a->path, b->path);
     if(result == 0)
     {
         result = compare_size(a->line, b->line);
@@ -152,11 +178,11 @@ static int compare_facts(const void *left, const void *right)
     }
     if(result == 0)
     {
-        result = p101_strcmp(NULL, a->name, b->name);
+        result = compare_text(a->name, b->name);
     }
     if(result == 0)
     {
-        result = p101_strcmp(NULL, a->caller, b->caller);
+        result = compare_text(a->caller, b->caller);
     }
     if(result == 0)
     {

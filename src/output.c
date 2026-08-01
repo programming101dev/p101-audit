@@ -85,6 +85,7 @@ static void module_name(const struct p101_env *env, const char *path, char *modu
     const char *name;
     const char *dot;
     const char *root;
+    size_t      length;
 
     P101_TRACE_SCOPE(env);
     root = p101_strstr(env, path, "/src/");
@@ -112,9 +113,14 @@ static void module_name(const struct p101_env *env, const char *path, char *modu
             name = name == NULL ? path : name + 1;
         }
     }
-    module[0] = '\0';
-    p101_snprintf(env, NULL, module, size, "%s", name);
-    dot = p101_strrchr(env, module, '.');
+    length = p101_strlen(env, name);
+    if(length >= size)
+    {
+        length = size - 1U;
+    }
+    p101_memcpy(env, module, name, length);
+    module[length] = '\0';
+    dot            = p101_strrchr(env, module, '.');
     if(dot != NULL)
     {
         module[(size_t)(dot - module)] = '\0';

@@ -58,19 +58,20 @@ static bool add_value(const char **values, size_t *count, size_t capacity, const
 static bool add_allowed_copy(const struct p101_env *env, struct p101_wrapper_arguments *arguments, const char *value)
 {
     size_t index;
+    size_t length;
 
     P101_TRACE_SCOPE(env);
     if(arguments->allowed_count >= P101_WRAPPER_MAX_NAMES || value == NULL || value[0] == '\0')
     {
         return false;
     }
-    index                                = arguments->allowed_count;
-    arguments->allowed_storage[index][0] = '\0';
-    p101_snprintf(env, NULL, arguments->allowed_storage[index], sizeof(arguments->allowed_storage[index]), "%s", value);
-    if(arguments->allowed_storage[index][0] == '\0')
+    length = p101_strlen(env, value);
+    if(length >= sizeof(arguments->allowed_storage[0]))
     {
         return false;
     }
+    index = arguments->allowed_count;
+    p101_memcpy(env, arguments->allowed_storage[index], value, length + 1U);
     arguments->allowed[index] = arguments->allowed_storage[index];
     arguments->allowed_count++;
     return true;
@@ -253,6 +254,7 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
     {
         arguments->paths[arguments->path_count++] = ".";
     }
+    /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: automatic discovery is an optional convenience. */
     if(arguments->compile_database == NULL && p101_c_facts_find_clang_compile_database(env, NULL, arguments->paths[0], discovered, sizeof(discovered)))
     {
         p101_snprintf(env, err, arguments->compile_database_storage, sizeof(arguments->compile_database_storage), "%s", discovered);

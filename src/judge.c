@@ -11,11 +11,19 @@ enum
 
 static void copy_field(const struct p101_env *env, char *destination, size_t size, const char *source)
 {
+    size_t length;
+
     P101_TRACE_SCOPE(env);
     destination[0] = '\0';
     if(source != NULL)
     {
-        p101_snprintf(env, NULL, destination, size, "%s", source);
+        length = p101_strlen(env, source);
+        if(length >= size)
+        {
+            length = size - 1U;
+        }
+        p101_memcpy(env, destination, source, length);
+        destination[length] = '\0';
     }
 }
 
@@ -106,6 +114,7 @@ static bool path_matches(const struct p101_env *env, const char *pattern, const 
     candidate = path;
     for(;;)
     {
+        /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: match failure and no-match are both a false probe. */
         if(p101_fnmatch(env, NULL, pattern, candidate, 0) == 0)
         {
             return true;
@@ -134,6 +143,7 @@ static bool is_allowed(const struct p101_env *env, struct p101_wrapper_arguments
     }
     for(index = 0U; index < arguments->allow_rule_count; index++)
     {
+        /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: match failure and no-match both reject the allow rule. */
         if(path_matches(env, arguments->allow_rules[index].path, fact->path) && p101_fnmatch(env, NULL, arguments->allow_rules[index].function, fact->caller, 0) == 0 && p101_fnmatch(env, NULL, arguments->allow_rules[index].callee, name, 0) == 0)
         {
             arguments->allow_rules[index].uses++;

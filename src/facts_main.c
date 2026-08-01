@@ -30,7 +30,7 @@ int main(int argc, char *argv[])
     p101_wrapper_model_init(&model);
     if(!p101_wrapper_parse_arguments(env, err, argc, argv, &arguments, true))
     {
-        p101_wrapper_usage(env, NULL, argv[0], true);
+        p101_wrapper_usage(env, NULL, argv[0], true);    // P101_ERROR_CONTRACT_ALLOW_NO_ERROR: usage must survive argument errors.
         if(help)
         {
             status = EXIT_SUCCESS;
@@ -52,6 +52,7 @@ int main(int argc, char *argv[])
 done:
     if(p101_error_has_error(err))
     {
+        /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: diagnostic output must not overwrite the reported failure. */
         p101_fprintf(env, NULL, stderr, "p101-c-facts: %s\n", p101_error_get_message(err));
         status = EXIT_TROUBLE;
     }
