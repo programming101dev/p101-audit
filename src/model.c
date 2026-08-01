@@ -26,12 +26,12 @@ void p101_wrapper_model_destroy(const struct p101_env *env, struct p101_wrapper_
 
 static void copy_field(const struct p101_env *env, char *destination, size_t size, const char *source)
 {
-    size_t length;
-
     P101_TRACE_SCOPE(env);
     destination[0] = '\0';
     if(source != NULL)
     {
+        size_t length;
+
         length = p101_strlen(env, source);
         if(length >= size)
         {

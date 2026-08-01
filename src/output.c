@@ -205,7 +205,6 @@ void p101_wrapper_write_audit(const struct p101_env *env, struct p101_error *err
 {
     size_t counts[4] = {0U, 0U, 0U, 0U};
     size_t index;
-    bool   first;
 
     P101_TRACE_SCOPE(env);
     for(index = 0U; index < model->finding_count; index++)
@@ -217,6 +216,8 @@ void p101_wrapper_write_audit(const struct p101_env *env, struct p101_error *err
     }
     if(arguments->json)
     {
+        bool first;
+
         p101_fprintf(env,
                      err,
                      stdout,
