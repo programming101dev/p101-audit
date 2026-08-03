@@ -28,6 +28,7 @@ set(_P101_LIB_DIRS
 set(P101_LIBS
         p101_error
         p101_env
+        p101_record
         p101_tool_event
         p101_c
         p101_c_facts

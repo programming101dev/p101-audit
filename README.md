@@ -125,7 +125,7 @@ It cannot see:
 
 For teaching, that is the intended ceiling: the audit tells students whether
 their code follows the wrapper contract. Pair it with `p101-observe`,
-`p101-resource-tracker`, and sanitizers for runtime behavior.
+the canonical `p101 analyze` resource policy, and sanitizers for runtime behavior.
 
 ## Exit status
 

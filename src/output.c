@@ -1,6 +1,8 @@
 #include "output.h"
+#include <errno.h>
 #include <p101_c/p101_stdio.h>
 #include <p101_c/p101_string.h>
+#include <p101_record/record.h>
 
 static void        tsv_string(const struct p101_env *env, struct p101_error *err, FILE *stream, const char *text);
 static void        module_name(const struct p101_env *env, const char *path, char *module, size_t size);
@@ -10,40 +12,11 @@ static const char *bool_text(bool value);
 
 void p101_wrapper_output_json_string(const struct p101_env *env, struct p101_error *err, FILE *stream, const char *text)
 {
-    const unsigned char *cursor;
-
     P101_TRACE_SCOPE(env);
-    p101_fputc(env, err, '"', stream);
-    if(text == NULL)
+    if(p101_record_write_json_string(stream, text == NULL ? "" : text) != 0)
     {
-        p101_fputc(env, err, '"', stream);
-        return;
+        P101_ERROR_RAISE_ERRNO(err, errno == 0 ? EIO : errno);
     }
-    for(cursor = (const unsigned char *)text; *cursor != '\0'; cursor++)
-    {
-        if(*cursor == '"' || *cursor == '\\')
-        {
-            p101_fputc(env, err, '\\', stream);
-            p101_fputc(env, err, *cursor, stream);
-        }
-        else if(*cursor == '\n')
-        {
-            p101_fputs(env, err, "\\n", stream);
-        }
-        else if(*cursor == '\r')
-        {
-            p101_fputs(env, err, "\\r", stream);
-        }
-        else if(*cursor == '\t')
-        {
-            p101_fputs(env, err, "\\t", stream);
-        }
-        else
-        {
-            p101_fputc(env, err, *cursor, stream);
-        }
-    }
-    p101_fputc(env, err, '"', stream);
 }
 
 static void tsv_string(const struct p101_env *env, struct p101_error *err, FILE *stream, const char *text)

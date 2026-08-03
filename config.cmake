@@ -53,7 +53,7 @@ set(c_facts_HEADERS
 set(P101_WRAPPER_AUDIT_LIBRARIES
         p101_error
         p101_env
-        p101_tool_event
+        p101_record
         p101_c
         p101_c_facts
         p101_filesystem
