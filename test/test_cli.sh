@@ -14,6 +14,11 @@ cat >"$work/src/alpha/local.h" <<'HEADER'
 #ifndef LOCAL_H
 #define LOCAL_H
 #define P101_TRACE_SCOPE(value) ((void)(value))
+typedef enum
+{
+    P101_SAMPLE_OK,
+    P101_SAMPLE_REFUSED
+} p101_sample_result;
 #endif
 HEADER
 cat >"$work/src/alpha/main.c" <<'SOURCE'
@@ -175,6 +180,8 @@ grep -q 'did not match' "$work/stale.err"
 
 "$facts" "$work" >"$work/facts.tsv"
 grep -q $'\talpha/main\t' "$work/facts.tsv"
+grep -q $'\tENUM\t.*\tp101_sample_result$' "$work/facts.tsv"
+grep -q $'\tENUMERATOR\t.*\tP101_SAMPLE_REFUSED\tp101_sample_result$' "$work/facts.tsv"
 grep -q $'\tERROR_OPTIONAL' "$work/facts.tsv"
 [ "$(grep -c $'\tERROR_UNCHECKED_CHAIN' "$work/facts.tsv")" -eq 1 ]
 awk -F '\t' '$3 == "INCLUDE" { found = 1; if(NF != 9) exit 1 } END { exit !found }' "$work/facts.tsv"

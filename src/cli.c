@@ -18,7 +18,7 @@ void p101_wrapper_usage(const struct p101_env *env, struct p101_error *err, cons
     p101_fprintf(env, err, stderr, "Usage: %s [options] [path...]\n", program_name);
     if(facts_only)
     {
-        p101_fputs(env, err, "Emit P101FACT v2 records using lib_c_facts/libclang.\n", stderr);
+        p101_fputs(env, err, "Emit P101FACT v4 records using lib_c_facts/libclang.\n", stderr);
     }
     else
     {
@@ -36,7 +36,7 @@ void p101_wrapper_usage(const struct p101_env *env, struct p101_error *err, cons
         p101_fputs(env, err, "  --allow-file FILE       read path:function:callee boundary rules\n", stderr);
         p101_fputs(env, err, "  --header-root DIR       add a wrapper inventory root\n", stderr);
         p101_fputs(env, err, "  --show-inventory[-json] print the wrapper inventory\n", stderr);
-        p101_fputs(env, err, "  --emit-module-facts     emit P101FACT v2 records\n", stderr);
+        p101_fputs(env, err, "  --emit-module-facts     emit P101FACT v4 records\n", stderr);
         p101_fputs(env, err, "  --facts-output FILE     write a reusable fact snapshot\n", stderr);
         p101_fputs(env, err, "  --input-manifest FILE   write an admitted-input receipt\n", stderr);
         p101_fputs(env, err, "  --instrumentation-output FILE  write instrumentation coverage\n", stderr);
@@ -47,46 +47,55 @@ void p101_wrapper_usage(const struct p101_env *env, struct p101_error *err, cons
 
 static bool add_value(const char **values, size_t *count, size_t capacity, const char *value)
 {
-    if(*count >= capacity || value == NULL || value[0] == '\0')
+    bool added;
+
+    added = (*count < capacity && value != NULL && value[0] != '\0') != 0;
+    if(added)
     {
-        return false;
+        values[(*count)++] = value;
     }
-    values[(*count)++] = value;
-    return true;
+    return added;
 }
 
 static bool add_allowed_copy(const struct p101_env *env, struct p101_wrapper_arguments *arguments, const char *value)
 {
     size_t index;
     size_t length;
+    bool   added;
 
     P101_TRACE_SCOPE(env);
+    added = false;
     if(arguments->allowed_count >= P101_WRAPPER_MAX_NAMES || value == NULL || value[0] == '\0')
     {
-        return false;
+        goto done;
     }
     length = p101_strlen(env, value);
     if(length >= sizeof(arguments->allowed_storage[0]))
     {
-        return false;
+        goto done;
     }
     index = arguments->allowed_count;
     p101_memcpy(env, arguments->allowed_storage[index], value, length + 1U);
     arguments->allowed[index] = arguments->allowed_storage[index];
     arguments->allowed_count++;
-    return true;
+    added = true;
+
+done:
+    return added;
 }
 
 static bool load_allow_file(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_arguments *arguments, const char *path)
 {
     FILE *stream;
     char  line[INPUT_LINE_SIZE];
+    bool  loaded;
 
     P101_TRACE_SCOPE(env);
+    loaded = false;
     stream = p101_fopen(env, err, path, "r");
     if(stream == NULL)
     {
-        return false;
+        goto done;
     }
     while(p101_fgets(env, err, line, sizeof(line), stream) != NULL)
     {
@@ -132,24 +141,30 @@ static bool load_allow_file(const struct p101_env *env, struct p101_error *err, 
         }
     }
     p101_fclose(env, err, stream);
-    return p101_error_has_no_error(err);
+    loaded = p101_error_has_no_error(err);
+
+done:
+    return loaded;
 }
 
 bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error *err, int argc, char *argv[], struct p101_wrapper_arguments *arguments, bool facts_only)
 {
     int  index;
     char discovered[P101_WRAPPER_PATH_SIZE];
+    bool valid;
 
     P101_TRACE_SCOPE(env);
     p101_memset(env, arguments, 0, sizeof(*arguments));
-    for(index = 1; index < argc; index++)
+    valid = true;
+    for(index = 1; index < argc && valid; index++)
     {
         const char *argument;
 
         argument = argv[index];
         if(p101_strcmp(env, argument, "-h") == 0 || p101_strcmp(env, argument, "--help") == 0)
         {
-            return false;
+            valid = false;
+            break;
         }
         if(p101_strcmp(env, argument, "-j") == 0 || p101_strcmp(env, argument, "--json") == 0)
         {
@@ -163,7 +178,7 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
         {
             if(!add_allowed_copy(env, arguments, argv[++index]))
             {
-                return false;
+                valid = false;
             }
         }
         else if(p101_strcmp(env, argument, "--allow-file") == 0 && index + 1 < argc)
@@ -173,7 +188,7 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
             allow_path = argv[++index];
             if(!add_value(arguments->allow_files, &arguments->allow_file_count, P101_WRAPPER_MAX_PATHS, allow_path) || !load_allow_file(env, err, arguments, allow_path))
             {
-                return false;
+                valid = false;
             }
         }
         else if(p101_strcmp(env, argument, "--compile-db") == 0 && index + 1 < argc)
@@ -192,21 +207,21 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
         {
             if(!add_value(arguments->extra_arguments, &arguments->extra_argument_count, P101_WRAPPER_MAX_NAMES, argv[++index]))
             {
-                return false;
+                valid = false;
             }
         }
         else if(p101_strncmp(env, argument, "--cflag=", sizeof("--cflag=") - 1U) == 0)
         {
             if(!add_value(arguments->extra_arguments, &arguments->extra_argument_count, P101_WRAPPER_MAX_NAMES, argument + sizeof("--cflag=") - 1U))
             {
-                return false;
+                valid = false;
             }
         }
         else if(p101_strcmp(env, argument, "--header-root") == 0 && index + 1 < argc)
         {
             if(!add_value(arguments->header_roots, &arguments->header_root_count, P101_WRAPPER_MAX_PATHS, argv[++index]))
             {
-                return false;
+                valid = false;
             }
         }
         else if(p101_strcmp(env, argument, "--keep-going") == 0)
@@ -247,27 +262,28 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
         }
         else if(argument[0] == '-' || !add_value(arguments->paths, &arguments->path_count, P101_WRAPPER_MAX_PATHS, argument))
         {
-            return false;
+            valid = false;
         }
     }
-    if(arguments->path_count == 0U)
+    if(valid && arguments->path_count == 0U)
     {
         arguments->paths[arguments->path_count++] = ".";
     }
     /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: automatic discovery is an optional convenience. */
-    if(arguments->compile_database == NULL && p101_c_facts_find_clang_compile_database(env, NULL, arguments->paths[0], discovered, sizeof(discovered)))
+    if(valid && arguments->compile_database == NULL && p101_c_facts_find_clang_compile_database(env, NULL, arguments->paths[0], discovered, sizeof(discovered)))
     {
         p101_snprintf(env, err, arguments->compile_database_storage, sizeof(arguments->compile_database_storage), "%s", discovered);
         arguments->compile_database = arguments->compile_database_storage;
     }
-    if(arguments->compile_database_only && arguments->compile_database == NULL)
+    if(valid && arguments->compile_database_only && arguments->compile_database == NULL)
     {
         P101_ERROR_RAISE_USER(err, "--compile-db-only requires a compilation database.", 1);
-        return false;
+        valid = false;
     }
     if(facts_only)
     {
         arguments->emit_facts = true;
     }
-    return p101_error_has_no_error(err);
+    valid = (valid && p101_error_has_no_error(err)) != 0;
+    return valid;
 }

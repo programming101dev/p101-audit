@@ -18,14 +18,18 @@ static bool add_inventory_mapping(const struct p101_env *env, struct p101_error 
 
 static bool inventory_has_original(const struct p101_env *env, const struct p101_wrapper_model *model, const char *name)
 {
+    bool found;
+
+    found = false;
     for(size_t index = 0U; index < model->inventory_count; index++)
     {
         if(p101_strcmp(env, model->inventory[index].original, name) == 0)
         {
-            return true;
+            found = true;
+            break;
         }
     }
-    return false;
+    return found;
 }
 
 static void copy_field(const struct p101_env *env, char *destination, size_t size, const char *source)
@@ -50,52 +54,67 @@ static bool grow_inventory(const struct p101_env *env, struct p101_error *err, s
 {
     size_t                         capacity;
     struct p101_wrapper_inventory *inventory;
+    bool                           grown;
 
     P101_TRACE_SCOPE(env);
+    grown     = false;
     capacity  = model->inventory_capacity == 0U ? INITIAL_CAPACITY : model->inventory_capacity * 2U;
     inventory = (struct p101_wrapper_inventory *)p101_realloc(env, err, model->inventory, capacity * sizeof(*inventory));
     if(inventory == NULL)
     {
-        return false;
+        goto done;
     }
     model->inventory          = inventory;
     model->inventory_capacity = capacity;
-    return true;
+    grown                     = true;
+
+done:
+    return grown;
 }
 
 static bool add_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *wrapper)
 {
     const char *original;
+    bool        added;
 
     P101_TRACE_SCOPE(env);
+    added = true;
     if(wrapper == NULL || p101_strncmp(env, wrapper, "p101_", sizeof("p101_") - 1U) != 0)
     {
-        return true;
+        goto done;
     }
     original = wrapper + sizeof("p101_") - 1U;
-    return add_inventory_mapping(env, err, model, original, wrapper);
+    added    = add_inventory_mapping(env, err, model, original, wrapper);
+
+done:
+    return added;
 }
 
 static bool add_inventory_mapping(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *original, const char *wrapper)
 {
     size_t index;
+    bool   added;
 
     P101_TRACE_SCOPE(env);
+    added = true;
     for(index = 0U; index < model->inventory_count; index++)
     {
         if(p101_strcmp(env, model->inventory[index].original, original) == 0)
         {
-            return true;
+            goto done;
         }
     }
     if(model->inventory_count == model->inventory_capacity && !grow_inventory(env, err, model))
     {
-        return false;
+        added = false;
+        goto done;
     }
     copy_field(env, model->inventory[model->inventory_count].original, sizeof(model->inventory[model->inventory_count].original), original);
     copy_field(env, model->inventory[model->inventory_count].wrapper, sizeof(model->inventory[model->inventory_count].wrapper), wrapper);
     model->inventory_count++;
-    return true;
+
+done:
+    return added;
 }
 
 static bool add_atomic_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model)
@@ -128,28 +147,33 @@ static bool add_atomic_inventory(const struct p101_env *env, struct p101_error *
     };
 
     size_t index;
+    bool   added;
 
     P101_TRACE_SCOPE(env);
+    added = true;
     for(index = 0U; index < sizeof(mappings) / sizeof(mappings[0]); index++)
     {
         if(!inventory_has_original(env, model, mappings[index].original) && !add_inventory_mapping(env, err, model, mappings[index].original, mappings[index].wrapper))
         {
-            return false;
+            added = false;
+            break;
         }
     }
-    return true;
+    return added;
 }
 
 static bool load_manifest_file(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *path)
 {
     FILE *stream;
     char  line[MANIFEST_LINE_SIZE];
+    bool  loaded;
 
     P101_TRACE_SCOPE(env);
+    loaded = false;
     stream = p101_fopen(env, err, path, "r");
     if(stream == NULL)
     {
-        return false;
+        goto done;
     }
     while(p101_fgets(env, err, line, sizeof(line), stream) != NULL)
     {
@@ -166,19 +190,24 @@ static bool load_manifest_file(const struct p101_env *env, struct p101_error *er
         }
     }
     p101_fclose(env, err, stream);
-    return p101_error_has_no_error(err);
+    loaded = p101_error_has_no_error(err);
+
+done:
+    return loaded;
 }
 
 static bool load_manifests(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *directory)    // NOLINT(misc-no-recursion)
 {
     DIR           *stream;
     struct dirent *entry;
+    bool           loaded;
 
     P101_TRACE_SCOPE(env);
+    loaded = false;
     stream = p101_opendir(env, err, directory);
     if(stream == NULL)
     {
-        return false;
+        goto done;
     }
     while((entry = p101_readdir(env, err, stream)) != NULL && p101_error_has_no_error(err))
     {
@@ -211,15 +240,20 @@ static bool load_manifests(const struct p101_env *env, struct p101_error *err, s
         }
     }
     p101_closedir(env, err, stream);
-    return p101_error_has_no_error(err);
+    loaded = p101_error_has_no_error(err);
+
+done:
+    return loaded;
 }
 
 static bool find_workspace_libraries(const struct p101_env *env, const char *program_path, char *path, size_t size)
 {
     char   current[P101_WRAPPER_PATH_SIZE];
     size_t attempt;
+    bool   found;
 
     P101_TRACE_SCOPE(env);
+    found = false;
     /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: discovery probes candidate roots. */
     if(program_path != NULL && p101_realpath(env, NULL, program_path, current) != NULL)
     {
@@ -234,7 +268,7 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
     /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: discovery failure is returned as false. */
     else if(p101_getcwd(env, NULL, current, sizeof(current)) == NULL)
     {
-        return false;
+        goto done;
     }
     for(attempt = 0U; attempt < WORKSPACE_PARENT_LIMIT; attempt++)
     {
@@ -246,7 +280,8 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
         /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: discovery probes candidate roots. */
         if(p101_stat(env, NULL, path, &status) == 0 && S_ISDIR(status.st_mode))
         {
-            return true;
+            found = true;
+            break;
         }
         slash = p101_strrchr(env, current, '/');
         if(slash == NULL || slash == current)
@@ -255,21 +290,28 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
         }
         current[(size_t)(slash - current)] = '\0';
     }
-    path[0] = '\0';
-    return false;
+    if(!found)
+    {
+        path[0] = '\0';
+    }
+
+done:
+    return found;
 }
 
 bool p101_wrapper_model_load_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const struct p101_wrapper_arguments *arguments, const char *program_path)
 {
     char   libraries[P101_WRAPPER_PATH_SIZE];
     size_t index;
+    bool   loaded;
 
     P101_TRACE_SCOPE(env);
+    loaded = true;
     if(find_workspace_libraries(env, program_path, libraries, sizeof(libraries)) && !load_manifests(env, err, model, libraries))
     {
-        return false;
+        loaded = false;
     }
-    for(index = 0U; index < arguments->header_root_count; index++)
+    for(index = 0U; loaded && index < arguments->header_root_count; index++)
     {
         struct p101_c_analysis_options options;
         const char                    *path;
@@ -288,25 +330,27 @@ bool p101_wrapper_model_load_inventory(const struct p101_env *env, struct p101_e
         options.keep_going                           = true;
         if(!p101_c_analysis_scan(env, err, &options, p101_wrapper_analysis_observer, model))
         {
-            return false;
+            loaded = false;
+            break;
         }
         for(fact_index = first_fact; fact_index < model->fact_count; fact_index++)
         {
             if(model->facts[fact_index].kind == P101_C_ANALYSIS_FUNCTION && !add_inventory(env, err, model, model->facts[fact_index].name))
             {
-                return false;
+                loaded = false;
+                break;
             }
         }
         model->fact_count = first_fact;
     }
-    if(!add_atomic_inventory(env, err, model))
+    if(loaded && !add_atomic_inventory(env, err, model))
     {
-        return false;
+        loaded = false;
     }
-    if(model->inventory_count == 0U)
+    if(loaded && model->inventory_count == 0U)
     {
         P101_ERROR_RAISE_USER(err, "No p101 wrapper inventory could be discovered.", 1);
-        return false;
+        loaded = false;
     }
-    return true;
+    return loaded;
 }

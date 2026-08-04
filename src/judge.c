@@ -31,17 +31,22 @@ static bool grow_findings(const struct p101_env *env, struct p101_error *err, st
 {
     size_t                       capacity;
     struct p101_wrapper_finding *findings;
+    bool                         grown;
 
     P101_TRACE_SCOPE(env);
+    grown    = false;
     capacity = model->finding_capacity == 0U ? INITIAL_CAPACITY : model->finding_capacity * 2U;
     findings = (struct p101_wrapper_finding *)p101_realloc(env, err, model->findings, capacity * sizeof(*findings));
     if(findings == NULL)
     {
-        return false;
+        goto done;
     }
     model->findings         = findings;
     model->finding_capacity = capacity;
-    return true;
+    grown                   = true;
+
+done:
+    return grown;
 }
 
 static const char *canonical_callee(const struct p101_env *env, const char *name)
@@ -67,32 +72,38 @@ static const char *canonical_callee(const struct p101_env *env, const char *name
         {"__builtin_va_start",        "va_start" },
     };
 
-    size_t index;
+    size_t      index;
+    const char *canonical;
 
     P101_TRACE_SCOPE(env);
+    canonical = name;
     for(index = 0U; index < sizeof(mappings) / sizeof(mappings[0]); index++)
     {
         if(p101_strcmp(env, name, mappings[index].lowered) == 0)
         {
-            return mappings[index].source;
+            canonical = mappings[index].source;
+            break;
         }
     }
-    return name;
+    return canonical;
 }
 
 static const char *find_wrapper(const struct p101_env *env, const struct p101_wrapper_model *model, const char *name)
 {
-    size_t index;
+    size_t      index;
+    const char *wrapper;
 
     P101_TRACE_SCOPE(env);
+    wrapper = NULL;
     for(index = 0U; index < model->inventory_count; index++)
     {
         if(p101_strcmp(env, model->inventory[index].original, name) == 0)
         {
-            return model->inventory[index].wrapper;
+            wrapper = model->inventory[index].wrapper;
+            break;
         }
     }
-    return NULL;
+    return wrapper;
 }
 
 static bool is_wrapper_implementation(const struct p101_env *env, const char *caller, const char *name, const char *wrapper)
@@ -113,11 +124,14 @@ static bool is_wrapper_implementation(const struct p101_env *env, const char *ca
     };
 
     size_t index;
+    bool   implementation;
 
     P101_TRACE_SCOPE(env);
+    implementation = false;
     if(wrapper != NULL && p101_strcmp(env, caller, wrapper) == 0)
     {
-        return true;
+        implementation = true;
+        goto done;
     }
     /*
      * The C standard permits the getc/putc families to be macros. Several
@@ -129,39 +143,48 @@ static bool is_wrapper_implementation(const struct p101_env *env, const char *ca
     {
         if(p101_strcmp(env, name, aliases[index].lowered) == 0 && p101_strcmp(env, caller, aliases[index].wrapper) == 0)
         {
-            return true;
+            implementation = true;
+            break;
         }
     }
-    return false;
+
+done:
+    return implementation;
 }
 
 static bool is_local(const struct p101_env *env, const struct p101_wrapper_model *model, const char *name)
 {
     size_t index;
+    bool   local;
 
     P101_TRACE_SCOPE(env);
+    local = false;
     for(index = 0U; index < model->fact_count; index++)
     {
         if(model->facts[index].kind == P101_C_ANALYSIS_FUNCTION && model->facts[index].is_definition && p101_strcmp(env, model->facts[index].name, name) == 0)
         {
-            return true;
+            local = true;
+            break;
         }
     }
-    return false;
+    return local;
 }
 
 static bool path_matches(const struct p101_env *env, const char *pattern, const char *path)
 {
     const char *candidate;
+    bool        matches;
 
     P101_TRACE_SCOPE(env);
     candidate = path;
+    matches   = false;
     for(;;)
     {
         /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: match failure and no-match are both a false probe. */
         if(p101_fnmatch(env, NULL, pattern, candidate, 0) == 0)
         {
-            return true;
+            matches = true;
+            break;
         }
         candidate = p101_strchr(env, candidate, '/');
         if(candidate == NULL)
@@ -170,49 +193,55 @@ static bool path_matches(const struct p101_env *env, const char *pattern, const 
         }
         candidate++;
     }
-    return false;
+    return matches;
 }
 
 static bool is_allowed(const struct p101_env *env, struct p101_wrapper_arguments *arguments, const struct p101_wrapper_fact *fact, const char *name)
 {
     size_t index;
+    bool   allowed;
 
     P101_TRACE_SCOPE(env);
+    allowed = false;
     for(index = 0U; index < arguments->allowed_count; index++)
     {
         if(p101_strcmp(env, arguments->allowed[index], name) == 0)
         {
-            return true;
+            allowed = true;
+            break;
         }
     }
-    for(index = 0U; index < arguments->allow_rule_count; index++)
+    for(index = 0U; !allowed && index < arguments->allow_rule_count; index++)
     {
         /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: match failure and no-match both reject the allow rule. */
         if(path_matches(env, arguments->allow_rules[index].path, fact->path) && p101_fnmatch(env, NULL, arguments->allow_rules[index].function, fact->caller, 0) == 0 && p101_fnmatch(env, NULL, arguments->allow_rules[index].callee, name, 0) == 0)
         {
             arguments->allow_rules[index].uses++;
-            return true;
+            allowed = true;
         }
     }
-    return false;
+    return allowed;
 }
 
 static bool add_finding(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, enum p101_wrapper_finding_kind kind, const struct p101_wrapper_fact *fact, const char *name, const char *replacement)
 {
     size_t                       index;
     struct p101_wrapper_finding *finding;
+    bool                         added;
 
     P101_TRACE_SCOPE(env);
+    added = true;
     for(index = 0U; index < model->finding_count; index++)
     {
         if(model->findings[index].line == fact->line && model->findings[index].column == fact->column && p101_strcmp(env, model->findings[index].path, fact->path) == 0 && p101_strcmp(env, model->findings[index].name, name) == 0)
         {
-            return true;
+            goto done;
         }
     }
     if(model->finding_count == model->finding_capacity && !grow_findings(env, err, model))
     {
-        return false;
+        added = false;
+        goto done;
     }
     finding = &model->findings[model->finding_count++];
     p101_memset(env, finding, 0, sizeof(*finding));
@@ -223,12 +252,15 @@ static bool add_finding(const struct p101_env *env, struct p101_error *err, stru
     copy_field(env, finding->name, sizeof(finding->name), name);
     copy_field(env, finding->caller, sizeof(finding->caller), fact->caller[0] == '\0' ? "?" : fact->caller);
     copy_field(env, finding->replacement, sizeof(finding->replacement), replacement);
-    return true;
+
+done:
+    return added;
 }
 
 static bool include_is_platform_specific(const struct p101_env *env, const char *name)
 {
     const char *relative;
+    bool        platform_specific;
 
     P101_TRACE_SCOPE(env);
     relative = name;
@@ -244,20 +276,19 @@ static bool include_is_platform_specific(const struct p101_env *env, const char 
     {
         relative = p101_strstr(env, name, "/windows/") + 1;
     }
-    if(p101_strcmp(env, relative, "sys/event.h") == 0 || p101_strcmp(env, relative, "sys/kqueue.h") == 0 || p101_strcmp(env, relative, "sys/sysctl.h") == 0 || p101_strncmp(env, relative, "linux/", sizeof("linux/") - 1U) == 0 ||
-       p101_strncmp(env, relative, "mach/", sizeof("mach/") - 1U) == 0 || p101_strncmp(env, relative, "windows/", sizeof("windows/") - 1U) == 0)
-    {
-        return true;
-    }
-    return false;
+    platform_specific = (p101_strcmp(env, relative, "sys/event.h") == 0 || p101_strcmp(env, relative, "sys/kqueue.h") == 0 || p101_strcmp(env, relative, "sys/sysctl.h") == 0 || p101_strncmp(env, relative, "linux/", sizeof("linux/") - 1U) == 0 ||
+                         p101_strncmp(env, relative, "mach/", sizeof("mach/") - 1U) == 0 || p101_strncmp(env, relative, "windows/", sizeof("windows/") - 1U) == 0) != 0;
+    return platform_specific;
 }
 
 bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, struct p101_wrapper_arguments *arguments)
 {
     size_t index;
+    bool   judged;
 
     P101_TRACE_SCOPE(env);
-    for(index = 0U; index < model->fact_count; index++)
+    judged = true;
+    for(index = 0U; judged && index < model->fact_count; index++)
     {
         const struct p101_wrapper_fact *fact;
 
@@ -266,7 +297,7 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
         {
             if(!add_finding(env, err, model, P101_WRAPPER_PORTABILITY, fact, fact->name, ""))
             {
-                return false;
+                judged = false;
             }
         }
         else if(fact->kind == P101_C_ANALYSIS_CALL || (fact->kind == P101_C_ANALYSIS_MACRO && !fact->is_definition))
@@ -315,12 +346,12 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
                 replacement = wrapper == NULL ? "" : wrapper;
                 if(!add_finding(env, err, model, finding_kind, fact, name, replacement))
                 {
-                    return false;
+                    judged = false;
                 }
             }
         }
     }
-    for(index = 0U; index < arguments->allow_rule_count; index++)
+    for(index = 0U; judged && index < arguments->allow_rule_count; index++)
     {
         if(arguments->allow_rules[index].uses == 0U)
         {
@@ -331,8 +362,8 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
             {
                 P101_ERROR_RAISE_USER(err, message, 1);
             }
-            return false;
+            judged = false;
         }
     }
-    return true;
+    return judged;
 }

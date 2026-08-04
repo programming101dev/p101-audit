@@ -48,33 +48,40 @@ static bool grow_facts(const struct p101_env *env, struct p101_error *err, struc
 {
     size_t                    capacity;
     struct p101_wrapper_fact *facts;
+    bool                      grown;
 
     P101_TRACE_SCOPE(env);
+    grown    = false;
     capacity = model->fact_capacity == 0U ? INITIAL_CAPACITY : model->fact_capacity * 2U;
     facts    = (struct p101_wrapper_fact *)p101_realloc(env, err, model->facts, capacity * sizeof(*facts));
     if(facts == NULL)
     {
-        return false;
+        goto done;
     }
     model->facts         = facts;
     model->fact_capacity = capacity;
-    return true;
+    grown                = true;
+
+done:
+    return grown;
 }
 
 bool p101_wrapper_analysis_observer(const struct p101_env *env, struct p101_error *err, const struct p101_c_analysis_record *record, void *context)
 {
     struct p101_wrapper_model *model;
     struct p101_wrapper_fact  *fact;
+    bool                       keep_going;
 
     P101_TRACE_SCOPE(env);
-    model = (struct p101_wrapper_model *)context;
+    model      = (struct p101_wrapper_model *)context;
+    keep_going = false;
     if(record->kind == P101_C_ANALYSIS_DIAGNOSTIC)
     {
         model->parse_failures++;
     }
     if(model->fact_count == model->fact_capacity && !grow_facts(env, err, model))
     {
-        return false;
+        goto done;
     }
     fact = &model->facts[model->fact_count++];
     p101_memset(env, fact, 0, sizeof(*fact));
@@ -94,14 +101,19 @@ bool p101_wrapper_analysis_observer(const struct p101_env *env, struct p101_erro
     fact->needs_error      = record->has_error_parameter;
     copy_field(env, fact->path, sizeof(fact->path), record->path);
     copy_field(env, fact->name, sizeof(fact->name), record->name);
+    copy_field(env, fact->type, sizeof(fact->type), record->type);
     copy_field(env, fact->caller, sizeof(fact->caller), record->caller);
     copy_field(env, fact->replacement, sizeof(fact->replacement), record->replacement);
-    return true;
+    keep_going = true;
+
+done:
+    return keep_going;
 }
 
 bool p101_wrapper_model_scan(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const struct p101_wrapper_arguments *arguments)
 {
     struct p101_c_analysis_options options;
+    bool                           scanned;
 
     P101_TRACE_SCOPE(env);
     p101_memset(env, &options, 0, sizeof(options));
@@ -118,13 +130,13 @@ bool p101_wrapper_model_scan(const struct p101_env *env, struct p101_error *err,
         options.include_headers_as_translation_units = true;
     }
     options.keep_going = arguments->keep_going;
-    if(!p101_c_analysis_scan(env, err, &options, p101_wrapper_analysis_observer, model))
+    scanned            = p101_c_analysis_scan(env, err, &options, p101_wrapper_analysis_observer, model);
+    if(scanned)
     {
-        return false;
+        assign_macro_callers(env, model);
+        deduplicate_facts(env, model);
     }
-    assign_macro_callers(env, model);
-    deduplicate_facts(env, model);
-    return true;
+    return scanned;
 }
 
 static void assign_macro_callers(const struct p101_env *env, struct p101_wrapper_model *model)
@@ -188,19 +200,27 @@ static void assign_macro_callers(const struct p101_env *env, struct p101_wrapper
 
 static int compare_size(size_t left, size_t right)
 {
+    int result;
+
     if(left < right)
     {
-        return -1;
+        result = -1;
     }
-    if(left > right)
+    else if(left > right)
     {
-        return 1;
+        result = 1;
     }
-    return 0;
+    else
+    {
+        result = 0;
+    }
+    return result;
 }
 
 static int compare_text(const char *left, const char *right)
 {
+    int result;
+
     while(*left != '\0' && *right != '\0' && *left == *right)
     {
         left++;
@@ -208,13 +228,17 @@ static int compare_text(const char *left, const char *right)
     }
     if((unsigned char)*left < (unsigned char)*right)
     {
-        return -1;
+        result = -1;
     }
-    if((unsigned char)*left > (unsigned char)*right)
+    else if((unsigned char)*left > (unsigned char)*right)
     {
-        return 1;
+        result = 1;
     }
-    return 0;
+    else
+    {
+        result = 0;
+    }
+    return result;
 }
 
 static int compare_facts(const void *left, const void *right)

@@ -51,7 +51,10 @@ static void add_call_capability(const struct p101_env *env, struct instrumentati
 
 static size_t find_function_fact(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *caller, const char *name)
 {
+    size_t found;
+
     P101_TRACE_SCOPE(env);
+    found = model->fact_count;
     for(size_t index = 0U; index < model->fact_count; index++)
     {
         const struct p101_wrapper_fact *candidate;
@@ -59,10 +62,11 @@ static size_t find_function_fact(const struct p101_env *env, const struct p101_w
         candidate = &model->facts[index];
         if(candidate->kind == P101_C_ANALYSIS_FUNCTION && candidate->is_definition && p101_strcmp(env, candidate->path, caller->path) == 0 && p101_strcmp(env, candidate->name, name) == 0)
         {
-            return index;
+            found = index;
+            break;
         }
     }
-    return model->fact_count;
+    return found;
 }
 
 static bool merge_capabilities(struct instrumentation_capabilities *destination, const struct instrumentation_capabilities *source)
@@ -120,7 +124,8 @@ static size_t find_calling_function(const struct p101_env *env, const struct p10
         }
         if(call->caller[0] != '\0' && p101_strcmp(env, candidate->name, call->caller) == 0)
         {
-            return index;
+            nearest = index;
+            break;
         }
         /*
          * Detailed preprocessing records are not children of the function
@@ -224,15 +229,20 @@ static void collect_capabilities(const struct p101_env *env, const struct p101_w
 static bool write_facts_file(const struct p101_env *env, struct p101_error *err, const struct p101_wrapper_model *model, const char *path)
 {
     FILE *stream;
+    bool  success;
 
-    stream = p101_fopen(env, err, path, "w");
+    success = false;
+    stream  = p101_fopen(env, err, path, "w");
     if(stream == NULL)
     {
-        return false;
+        goto done;
     }
     p101_wrapper_write_facts(env, err, model, stream);
     p101_fclose(env, err, stream);
-    return p101_error_has_no_error(err);
+    success = p101_error_has_no_error(err);
+
+done:
+    return success;
 }
 
 static bool write_manifest(const struct p101_env *env, struct p101_error *err, const struct p101_wrapper_model *model, const struct p101_wrapper_arguments *arguments)
@@ -240,11 +250,13 @@ static bool write_manifest(const struct p101_env *env, struct p101_error *err, c
     FILE  *stream;
     size_t index;
     bool   first;
+    bool   success;
 
-    stream = p101_fopen(env, err, arguments->input_manifest, "w");
+    success = false;
+    stream  = p101_fopen(env, err, arguments->input_manifest, "w");
     if(stream == NULL)
     {
-        return false;
+        goto done;
     }
     p101_fputs(env, err, "{\"schema\":\"p101-wrapper-input-manifest-v3\",\"parser\":\"libclang\",\"compile_database\":", stream);
     p101_wrapper_output_json_string(env, err, stream, arguments->compile_database);
@@ -311,7 +323,10 @@ static bool write_manifest(const struct p101_env *env, struct p101_error *err, c
     }
     p101_fprintf(env, err, stream, "],\"inventory_entries\":%zu,\"allow_rules\":%zu,\"facts\":%zu,\"parse_failures\":%zu}\n", model->inventory_count, arguments->allow_rule_count, model->fact_count, model->parse_failures);
     p101_fclose(env, err, stream);
-    return p101_error_has_no_error(err);
+    success = p101_error_has_no_error(err);
+
+done:
+    return success;
 }
 
 static bool write_mutations(const struct p101_env *env, struct p101_error *err, const struct p101_wrapper_model *model, const char *path)
@@ -319,11 +334,13 @@ static bool write_mutations(const struct p101_env *env, struct p101_error *err, 
     FILE  *stream;
     size_t index;
     bool   first;
+    bool   success;
 
-    stream = p101_fopen(env, err, path, "w");
+    success = false;
+    stream  = p101_fopen(env, err, path, "w");
     if(stream == NULL)
     {
-        return false;
+        goto done;
     }
     p101_fputs(env, err, "{\"schema\":\"p101-mutation-candidates-v2\",\"producer\":\"lib_c_facts\",\"candidates\":[", stream);
     first = true;
@@ -353,7 +370,10 @@ static bool write_mutations(const struct p101_env *env, struct p101_error *err, 
     }
     p101_fputs(env, err, "]}\n", stream);
     p101_fclose(env, err, stream);
-    return p101_error_has_no_error(err);
+    success = p101_error_has_no_error(err);
+
+done:
+    return success;
 }
 
 static bool write_instrumentation(const struct p101_env *env, struct p101_error *err, const struct p101_wrapper_model *model, const char *path)
@@ -362,21 +382,22 @@ static bool write_instrumentation(const struct p101_env *env, struct p101_error 
     struct instrumentation_capabilities *capabilities;
     size_t                               index;
     bool                                 first;
+    bool                                 success;
 
-    stream = p101_fopen(env, err, path, "w");
+    capabilities = NULL;
+    success      = false;
+    stream       = p101_fopen(env, err, path, "w");
     if(stream == NULL)
     {
-        return false;
+        goto done;
     }
-    capabilities = NULL;
     if(model->fact_count > 0U)
     {
         capabilities = (struct instrumentation_capabilities *)p101_calloc(env, err, model->fact_count, sizeof(*capabilities));
     }
     if(model->fact_count > 0U && capabilities == NULL)
     {
-        p101_fclose(env, err, stream);
-        return false;
+        goto done;
     }
     collect_capabilities(env, model, capabilities);
     p101_fputs(env, err, "{\"schema\":\"p101-instrumentation-coverage-v1\",\"producer\":\"p101-wrapper-audit\",\"functions\":[", stream);
@@ -415,28 +436,38 @@ static bool write_instrumentation(const struct p101_env *env, struct p101_error 
                      p101_wrapper_output_json_bool_text(capabilities[index].resource));
     }
     p101_fputs(env, err, "]}\n", stream);
+    success = p101_error_has_no_error(err);
+
+done:
     p101_free(env, capabilities);
-    p101_fclose(env, err, stream);
-    return p101_error_has_no_error(err);
+    if(stream != NULL)
+    {
+        p101_fclose(env, err, stream);
+    }
+    success = (success && p101_error_has_no_error(err)) != 0;
+    return success;
 }
 
 bool p101_wrapper_write_optional_outputs(const struct p101_env *env, struct p101_error *err, const struct p101_wrapper_model *model, const struct p101_wrapper_arguments *arguments)
 {
+    bool success;
+
+    success = true;
     if(arguments->facts_output != NULL && !write_facts_file(env, err, model, arguments->facts_output))
     {
-        return false;
+        success = false;
     }
-    if(arguments->input_manifest != NULL && !write_manifest(env, err, model, arguments))
+    if(success && arguments->input_manifest != NULL && !write_manifest(env, err, model, arguments))
     {
-        return false;
+        success = false;
     }
-    if(arguments->mutation_output != NULL && !write_mutations(env, err, model, arguments->mutation_output))
+    if(success && arguments->mutation_output != NULL && !write_mutations(env, err, model, arguments->mutation_output))
     {
-        return false;
+        success = false;
     }
-    if(arguments->instrumentation_output != NULL && !write_instrumentation(env, err, model, arguments->instrumentation_output))
+    if(success && arguments->instrumentation_output != NULL && !write_instrumentation(env, err, model, arguments->instrumentation_output))
     {
-        return false;
+        success = false;
     }
-    return true;
+    return success;
 }

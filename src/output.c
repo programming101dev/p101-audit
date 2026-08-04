@@ -103,41 +103,63 @@ static void module_name(const struct p101_env *env, const char *path, char *modu
 static const char *finding_id(enum p101_wrapper_finding_kind kind)
 {
     static const char *const ids[] = {"P101-WRAP-001", "P101-WRAP-002", "P101-WRAP-003", "P101-WRAP-004"};
+    const char              *id;
 
     if(kind < P101_WRAPPER_MISSED || kind > P101_WRAPPER_PORTABILITY)
     {
-        return "P101-WRAP-000";
+        id = "P101-WRAP-000";
     }
-    return ids[kind];
+    else
+    {
+        id = ids[kind];
+    }
+    return id;
 }
 
 static const char *finding_label(enum p101_wrapper_finding_kind kind)
 {
     static const char *const labels[] = {"missed-wrapper", "external-call", "indirect-call", "portability-include"};
+    const char              *label;
 
     if(kind < P101_WRAPPER_MISSED || kind > P101_WRAPPER_PORTABILITY)
     {
-        return "unknown";
+        label = "unknown";
     }
-    return labels[kind];
+    else
+    {
+        label = labels[kind];
+    }
+    return label;
 }
 
 static const char *bool_text(bool value)
 {
+    const char *text;
+
     if(value)
     {
-        return "1";
+        text = "1";
     }
-    return "0";
+    else
+    {
+        text = "0";
+    }
+    return text;
 }
 
 const char *p101_wrapper_output_json_bool_text(bool value)
 {
+    const char *text;
+
     if(value)
     {
-        return "true";
+        text = "true";
     }
-    return "false";
+    else
+    {
+        text = "false";
+    }
+    return text;
 }
 
 void p101_wrapper_write_inventory(const struct p101_env *env, struct p101_error *err, const struct p101_wrapper_model *model, bool json)
@@ -315,7 +337,7 @@ static void write_fact_prefix(const struct p101_env *env, struct p101_error *err
     char module[P101_WRAPPER_NAME_SIZE];
 
     module_name(env, fact->path, module, sizeof(module));
-    p101_fputs(env, err, "P101FACT\t2\t", stream);
+    p101_fputs(env, err, "P101FACT\t4\t", stream);
     p101_fputs(env, err, p101_c_analysis_kind_name(fact->kind), stream);
     p101_fputc(env, err, '\t', stream);
     tsv_string(env, err, stream, fact->path);
@@ -342,7 +364,7 @@ void p101_wrapper_write_facts(const struct p101_env *env, struct p101_error *err
         {
             continue;
         }
-        if((fact->kind == P101_C_ANALYSIS_TYPE || fact->kind == P101_C_ANALYSIS_MACRO) && !fact->is_header)
+        if((fact->kind == P101_C_ANALYSIS_TYPE || fact->kind == P101_C_ANALYSIS_ENUM || fact->kind == P101_C_ANALYSIS_ENUMERATOR || fact->kind == P101_C_ANALYSIS_MACRO) && !fact->is_header)
         {
             continue;
         }
@@ -353,10 +375,25 @@ void p101_wrapper_write_facts(const struct p101_env *env, struct p101_error *err
             tsv_string(env, err, stream, fact->name);
             p101_fprintf(env, err, stream, "\t%s", bool_text(fact->is_local_include));
         }
-        else if(fact->kind == P101_C_ANALYSIS_TYPE || fact->kind == P101_C_ANALYSIS_MACRO || fact->kind == P101_C_ANALYSIS_NOTE)
+        else if(fact->kind == P101_C_ANALYSIS_TYPE || fact->kind == P101_C_ANALYSIS_ENUM || fact->kind == P101_C_ANALYSIS_MACRO)
         {
             p101_fputc(env, err, '\t', stream);
             tsv_string(env, err, stream, fact->name);
+        }
+        else if(fact->kind == P101_C_ANALYSIS_ENUMERATOR)
+        {
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->name);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->type);
+        }
+        else if(fact->kind == P101_C_ANALYSIS_NOTE)
+        {
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->name);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->caller);
+            p101_fprintf(env, err, stream, "\t%zu", fact->column);
         }
         else if(fact->kind == P101_C_ANALYSIS_FUNCTION)
         {
@@ -376,6 +413,8 @@ void p101_wrapper_write_facts(const struct p101_env *env, struct p101_error *err
             p101_fputc(env, err, '\t', stream);
             tsv_string(env, err, stream, fact->name);
             p101_fprintf(env, err, stream, "\t%s\t%s", bool_text(fact->needs_env), bool_text(fact->needs_error));
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->caller);
         }
         p101_fputc(env, err, '\n', stream);
     }
