@@ -3,7 +3,7 @@
 
 #include "model.h"
 
-void p101_wrapper_output_json_string(const struct p101_env *env, struct p101_error *err, FILE *stream, const char *text);
+void        p101_wrapper_output_json_string(const struct p101_env *env, struct p101_error *err, FILE *stream, const char *text);
 const char *p101_wrapper_output_json_bool_text(bool value);
 #include <stdio.h>
 

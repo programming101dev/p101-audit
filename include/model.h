@@ -28,6 +28,7 @@ struct p101_wrapper_arguments
     size_t      allowed_count;
     const char *allow_files[P101_WRAPPER_MAX_PATHS];
     size_t      allow_file_count;
+
     struct
     {
         char   path[P101_WRAPPER_PATH_SIZE];
@@ -35,6 +36,7 @@ struct p101_wrapper_arguments
         char   callee[P101_WRAPPER_NAME_SIZE];
         size_t uses;
     } allow_rules[P101_WRAPPER_MAX_NAMES];
+
     size_t      allow_rule_count;
     const char *compile_database;
     char        compile_database_storage[P101_WRAPPER_PATH_SIZE];
