@@ -34,7 +34,7 @@ void p101_wrapper_usage(const struct p101_env *env, struct p101_error *err, cons
         p101_fputs(env, err, "  -e, --strict-external   fail for external and indirect calls\n", stderr);
         p101_fputs(env, err, "  --allow-usr USR         allow an exact external declaration identity\n", stderr);
         p101_fputs(env, err, "  --allow-file FILE       read TSV path/caller-USR/callee-USR rules\n", stderr);
-        p101_fputs(env, err, "  --header-root DIR       add a wrapper inventory root\n", stderr);
+        p101_fputs(env, err, "  --header-root PATH      trust public declarations and wrapper roles under PATH\n", stderr);
         p101_fputs(env, err, "  --show-inventory[-json] print the wrapper inventory\n", stderr);
         p101_fputs(env, err, "  --emit-module-facts     emit P101FACT v6 records\n", stderr);
         p101_fputs(env, err, "  --facts-output FILE     write a reusable fact snapshot\n", stderr);
@@ -86,9 +86,15 @@ done:
 
 static bool load_allow_file(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_arguments *arguments, const char *path)
 {
-    FILE *stream;
-    char  line[INPUT_LINE_SIZE];
-    bool  loaded;
+    int         p101_expression_result_13;
+    int         p101_expression_result_14;
+    int         p101_expression_result_15;
+    int         p101_expression_result_16;
+    const char *p101_call_result_17;
+    char       *line_result;
+    FILE       *stream;
+    char        line[INPUT_LINE_SIZE];
+    bool        loaded;
 
     P101_TRACE_SCOPE(env);
     loaded = false;
@@ -97,13 +103,18 @@ static bool load_allow_file(const struct p101_env *env, struct p101_error *err, 
     {
         goto done;
     }
-    while(p101_fgets(env, err, line, sizeof(line), stream) != NULL)
+    for(;;)
     {
         const char *comment;
         const char *newline;
         const char *first;
         const char *last;
 
+        line_result = p101_fgets(env, err, line, sizeof(line), stream);
+        if(line_result == NULL)
+        {
+            break;
+        }
         comment = p101_strchr(env, line, '#');
         if(comment != NULL)
         {
@@ -115,8 +126,48 @@ static bool load_allow_file(const struct p101_env *env, struct p101_error *err, 
             line[(size_t)(newline - line)] = '\0';
         }
         first = p101_strchr(env, line, '\t');
-        last  = first == NULL ? NULL : p101_strchr(env, first + 1, '\t');
-        if(first != NULL && last != NULL && p101_strchr(env, last + 1, '\t') == NULL && line[0] != '\0' && last[1] != '\0')
+        if(first == NULL)
+        {
+            last = NULL;
+        }
+        else
+        {
+            last = p101_strchr(env, first + 1, '\t');
+        }
+        p101_expression_result_16 = 0;
+        if(first != NULL)
+        {
+            if(last != NULL)
+            {
+                p101_expression_result_16 = 1;
+            }
+        }
+        p101_expression_result_15 = 0;
+        if(p101_expression_result_16)
+        {
+            p101_call_result_17 = p101_strchr(env, last + 1, '\t');
+            if(p101_call_result_17 == NULL)
+            {
+                p101_expression_result_15 = 1;
+            }
+        }
+        p101_expression_result_14 = 0;
+        if(p101_expression_result_15)
+        {
+            if(line[0] != '\0')
+            {
+                p101_expression_result_14 = 1;
+            }
+        }
+        p101_expression_result_13 = 0;
+        if(p101_expression_result_14)
+        {
+            if(last[1] != '\0')
+            {
+                p101_expression_result_13 = 1;
+            }
+        }
+        if(p101_expression_result_13)
         {
             size_t rule_index;
 
@@ -149,6 +200,55 @@ done:
 
 bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error *err, int argc, char *argv[], struct p101_wrapper_arguments *arguments, bool facts_only)
 {
+    int  p101_expression_result_18;
+    int  p101_call_result_19;
+    int  p101_call_result_20;
+    int  p101_expression_result_21;
+    int  p101_call_result_22;
+    int  p101_call_result_23;
+    int  p101_expression_result_24;
+    int  p101_call_result_25;
+    int  p101_call_result_26;
+    int  p101_expression_result_27;
+    int  p101_call_result_28;
+    int  p101_expression_result_29;
+    int  p101_call_result_30;
+    int  p101_expression_result_31;
+    bool p101_call_result_32;
+    bool p101_call_result_33;
+    int  p101_expression_result_34;
+    int  p101_call_result_35;
+    int  p101_expression_result_36;
+    int  p101_call_result_37;
+    int  p101_expression_result_38;
+    int  p101_call_result_39;
+    int  p101_expression_result_40;
+    int  p101_call_result_41;
+    int  p101_expression_result_42;
+    int  p101_call_result_43;
+    int  p101_expression_result_44;
+    int  p101_call_result_45;
+    int  p101_expression_result_46;
+    int  p101_call_result_47;
+    int  p101_expression_result_48;
+    bool p101_call_result_49;
+    int  p101_expression_result_50;
+    int  p101_expression_result_51;
+    bool p101_call_result_52;
+    int  p101_expression_result_53;
+    bool p101_call_result_54;
+    int  p101_call_result_7;
+    int  p101_call_result_8;
+    int  p101_call_result_9;
+    int  p101_call_result_10;
+    int  p101_call_result_11;
+    int  p101_call_result_12;
+    int  p101_call_result_6;
+    int  p101_call_result_5;
+    bool p101_call_result_1;
+    bool p101_call_result_2;
+    bool p101_call_result_3;
+    bool p101_call_result_4;
     int  index;
     char discovered[P101_WRAPPER_PATH_SIZE];
     bool valid;
@@ -160,109 +260,340 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
     {
         const char *argument;
 
-        argument = argv[index];
-        if(p101_strcmp(env, argument, "-h") == 0 || p101_strcmp(env, argument, "--help") == 0)
+        argument            = argv[index];
+        p101_call_result_19 = p101_strcmp(env, argument, "-h");
+        if(p101_call_result_19 == 0)
+        {
+            p101_expression_result_18 = 1;
+        }
+        else
+        {
+            p101_call_result_20 = p101_strcmp(env, argument, "--help");
+            if(p101_call_result_20 == 0)
+            {
+                p101_expression_result_18 = 1;
+            }
+            else
+            {
+                p101_expression_result_18 = 0;
+            }
+        }
+        if(p101_expression_result_18)
         {
             valid = false;
             break;
         }
-        if(p101_strcmp(env, argument, "-j") == 0 || p101_strcmp(env, argument, "--json") == 0)
+        p101_call_result_22 = p101_strcmp(env, argument, "-j");
+        if(p101_call_result_22 == 0)
+        {
+            p101_expression_result_21 = 1;
+        }
+        else
+        {
+            p101_call_result_23 = p101_strcmp(env, argument, "--json");
+            if(p101_call_result_23 == 0)
+            {
+                p101_expression_result_21 = 1;
+            }
+            else
+            {
+                p101_expression_result_21 = 0;
+            }
+        }
+        if(p101_expression_result_21)
         {
             arguments->json = true;
         }
-        else if(p101_strcmp(env, argument, "-e") == 0 || p101_strcmp(env, argument, "--strict-external") == 0)
+        else
         {
-            arguments->strict_external = true;
-        }
-        else if(p101_strcmp(env, argument, "--allow-usr") == 0 && index + 1 < argc)
-        {
-            if(!add_allowed_copy(env, arguments, argv[++index]))
+            p101_call_result_25 = p101_strcmp(env, argument, "-e");
+            if(p101_call_result_25 == 0)
             {
-                valid = false;
+                p101_expression_result_24 = 1;
             }
-        }
-        else if(p101_strcmp(env, argument, "--allow-file") == 0 && index + 1 < argc)
-        {
-            const char *allow_path;
+            else
+            {
+                p101_call_result_26 = p101_strcmp(env, argument, "--strict-external");
+                if(p101_call_result_26 == 0)
+                {
+                    p101_expression_result_24 = 1;
+                }
+                else
+                {
+                    p101_expression_result_24 = 0;
+                }
+            }
+            if(p101_expression_result_24)
+            {
+                arguments->strict_external = true;
+            }
+            else
+            {
+                p101_call_result_28       = p101_strcmp(env, argument, "--allow-usr");
+                p101_expression_result_27 = 0;
+                if(p101_call_result_28 == 0)
+                {
+                    if(index + 1 < argc)
+                    {
+                        p101_expression_result_27 = 1;
+                    }
+                }
+                if(p101_expression_result_27)
+                {
+                    p101_call_result_1 = add_allowed_copy(env, arguments, argv[++index]);
+                    if(!p101_call_result_1)
+                    {
+                        valid = false;
+                    }
+                }
+                else
+                {
+                    p101_call_result_30       = p101_strcmp(env, argument, "--allow-file");
+                    p101_expression_result_29 = 0;
+                    if(p101_call_result_30 == 0)
+                    {
+                        if(index + 1 < argc)
+                        {
+                            p101_expression_result_29 = 1;
+                        }
+                    }
+                    if(p101_expression_result_29)
+                    {
+                        const char *allow_path;
 
-            allow_path = argv[++index];
-            if(!add_value(arguments->allow_files, &arguments->allow_file_count, P101_WRAPPER_MAX_PATHS, allow_path) || !load_allow_file(env, err, arguments, allow_path))
-            {
-                valid = false;
+                        allow_path          = argv[++index];
+                        p101_call_result_32 = add_value(arguments->allow_files, &arguments->allow_file_count, P101_WRAPPER_MAX_PATHS, allow_path);
+                        if(!p101_call_result_32)
+                        {
+                            p101_expression_result_31 = 1;
+                        }
+                        else
+                        {
+                            p101_call_result_33 = load_allow_file(env, err, arguments, allow_path);
+                            if(!p101_call_result_33)
+                            {
+                                p101_expression_result_31 = 1;
+                            }
+                            else
+                            {
+                                p101_expression_result_31 = 0;
+                            }
+                        }
+                        if(p101_expression_result_31)
+                        {
+                            valid = false;
+                        }
+                    }
+                    else
+                    {
+                        p101_call_result_35       = p101_strcmp(env, argument, "--compile-db");
+                        p101_expression_result_34 = 0;
+                        if(p101_call_result_35 == 0)
+                        {
+                            if(index + 1 < argc)
+                            {
+                                p101_expression_result_34 = 1;
+                            }
+                        }
+                        if(p101_expression_result_34)
+                        {
+                            arguments->compile_database = argv[++index];
+                        }
+                        else
+                        {
+                            p101_call_result_5 = p101_strcmp(env, argument, "--compile-db-only");
+                            if(p101_call_result_5 == 0)
+                            {
+                                arguments->compile_database_only = true;
+                            }
+                            else
+                            {
+                                p101_call_result_6 = p101_strcmp(env, argument, "--active-headers-only");
+                                if(p101_call_result_6 == 0)
+                                {
+                                    arguments->active_headers_only = true;
+                                }
+                                else
+                                {
+                                    p101_call_result_37       = p101_strcmp(env, argument, "--cflag");
+                                    p101_expression_result_36 = 0;
+                                    if(p101_call_result_37 == 0)
+                                    {
+                                        if(index + 1 < argc)
+                                        {
+                                            p101_expression_result_36 = 1;
+                                        }
+                                    }
+                                    if(p101_expression_result_36)
+                                    {
+                                        p101_call_result_2 = add_value(arguments->extra_arguments, &arguments->extra_argument_count, P101_WRAPPER_MAX_NAMES, argv[++index]);
+                                        if(!p101_call_result_2)
+                                        {
+                                            valid = false;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        p101_call_result_7 = p101_strncmp(env, argument, "--cflag=", sizeof("--cflag=") - 1U);
+                                        if(p101_call_result_7 == 0)
+                                        {
+                                            p101_call_result_3 = add_value(arguments->extra_arguments, &arguments->extra_argument_count, P101_WRAPPER_MAX_NAMES, argument + sizeof("--cflag=") - 1U);
+                                            if(!p101_call_result_3)
+                                            {
+                                                valid = false;
+                                            }
+                                        }
+                                        else
+                                        {
+                                            p101_call_result_39       = p101_strcmp(env, argument, "--header-root");
+                                            p101_expression_result_38 = 0;
+                                            if(p101_call_result_39 == 0)
+                                            {
+                                                if(index + 1 < argc)
+                                                {
+                                                    p101_expression_result_38 = 1;
+                                                }
+                                            }
+                                            if(p101_expression_result_38)
+                                            {
+                                                p101_call_result_4 = add_value(arguments->header_roots, &arguments->header_root_count, P101_WRAPPER_MAX_PATHS, argv[++index]);
+                                                if(!p101_call_result_4)
+                                                {
+                                                    valid = false;
+                                                }
+                                            }
+                                            else
+                                            {
+                                                p101_call_result_8 = p101_strcmp(env, argument, "--keep-going");
+                                                if(p101_call_result_8 == 0)
+                                                {
+                                                    arguments->keep_going = true;
+                                                }
+                                                else
+                                                {
+                                                    p101_call_result_9 = p101_strcmp(env, argument, "--show-inventory");
+                                                    if(p101_call_result_9 == 0)
+                                                    {
+                                                        arguments->show_inventory = true;
+                                                    }
+                                                    else
+                                                    {
+                                                        p101_call_result_10 = p101_strcmp(env, argument, "--show-inventory-json");
+                                                        if(p101_call_result_10 == 0)
+                                                        {
+                                                            arguments->show_inventory_json = true;
+                                                        }
+                                                        else
+                                                        {
+                                                            p101_call_result_11 = p101_strcmp(env, argument, "--emit-module-facts");
+                                                            if(p101_call_result_11 == 0)
+                                                            {
+                                                                arguments->emit_facts = true;
+                                                            }
+                                                            else
+                                                            {
+                                                                p101_call_result_41       = p101_strcmp(env, argument, "--facts-output");
+                                                                p101_expression_result_40 = 0;
+                                                                if(p101_call_result_41 == 0)
+                                                                {
+                                                                    if(index + 1 < argc)
+                                                                    {
+                                                                        p101_expression_result_40 = 1;
+                                                                    }
+                                                                }
+                                                                if(p101_expression_result_40)
+                                                                {
+                                                                    arguments->facts_output = argv[++index];
+                                                                }
+                                                                else
+                                                                {
+                                                                    p101_call_result_43       = p101_strcmp(env, argument, "--input-manifest");
+                                                                    p101_expression_result_42 = 0;
+                                                                    if(p101_call_result_43 == 0)
+                                                                    {
+                                                                        if(index + 1 < argc)
+                                                                        {
+                                                                            p101_expression_result_42 = 1;
+                                                                        }
+                                                                    }
+                                                                    if(p101_expression_result_42)
+                                                                    {
+                                                                        arguments->input_manifest = argv[++index];
+                                                                    }
+                                                                    else
+                                                                    {
+                                                                        p101_call_result_45       = p101_strcmp(env, argument, "--instrumentation-output");
+                                                                        p101_expression_result_44 = 0;
+                                                                        if(p101_call_result_45 == 0)
+                                                                        {
+                                                                            if(index + 1 < argc)
+                                                                            {
+                                                                                p101_expression_result_44 = 1;
+                                                                            }
+                                                                        }
+                                                                        if(p101_expression_result_44)
+                                                                        {
+                                                                            arguments->instrumentation_output = argv[++index];
+                                                                        }
+                                                                        else
+                                                                        {
+                                                                            p101_call_result_47       = p101_strcmp(env, argument, "--mutation-candidates-output");
+                                                                            p101_expression_result_46 = 0;
+                                                                            if(p101_call_result_47 == 0)
+                                                                            {
+                                                                                if(index + 1 < argc)
+                                                                                {
+                                                                                    p101_expression_result_46 = 1;
+                                                                                }
+                                                                            }
+                                                                            if(p101_expression_result_46)
+                                                                            {
+                                                                                arguments->mutation_output = argv[++index];
+                                                                            }
+                                                                            else
+                                                                            {
+                                                                                p101_call_result_12 = p101_strcmp(env, argument, "--check-portability-includes");
+                                                                                if(argument[0] == '-')
+                                                                                {
+                                                                                    p101_expression_result_48 = 1;
+                                                                                }
+                                                                                else
+                                                                                {
+                                                                                    p101_call_result_49 = add_value(arguments->paths, &arguments->path_count, P101_WRAPPER_MAX_PATHS, argument);
+                                                                                    if(!p101_call_result_49)
+                                                                                    {
+                                                                                        p101_expression_result_48 = 1;
+                                                                                    }
+                                                                                    else
+                                                                                    {
+                                                                                        p101_expression_result_48 = 0;
+                                                                                    }
+                                                                                }
+                                                                                if(p101_call_result_12 == 0)
+                                                                                {
+                                                                                    arguments->check_portability = true;
+                                                                                }
+                                                                                else if(p101_expression_result_48)
+                                                                                {
+                                                                                    valid = false;
+                                                                                }
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
-        }
-        else if(p101_strcmp(env, argument, "--compile-db") == 0 && index + 1 < argc)
-        {
-            arguments->compile_database = argv[++index];
-        }
-        else if(p101_strcmp(env, argument, "--compile-db-only") == 0)
-        {
-            arguments->compile_database_only = true;
-        }
-        else if(p101_strcmp(env, argument, "--active-headers-only") == 0)
-        {
-            arguments->active_headers_only = true;
-        }
-        else if(p101_strcmp(env, argument, "--cflag") == 0 && index + 1 < argc)
-        {
-            if(!add_value(arguments->extra_arguments, &arguments->extra_argument_count, P101_WRAPPER_MAX_NAMES, argv[++index]))
-            {
-                valid = false;
-            }
-        }
-        else if(p101_strncmp(env, argument, "--cflag=", sizeof("--cflag=") - 1U) == 0)
-        {
-            if(!add_value(arguments->extra_arguments, &arguments->extra_argument_count, P101_WRAPPER_MAX_NAMES, argument + sizeof("--cflag=") - 1U))
-            {
-                valid = false;
-            }
-        }
-        else if(p101_strcmp(env, argument, "--header-root") == 0 && index + 1 < argc)
-        {
-            if(!add_value(arguments->header_roots, &arguments->header_root_count, P101_WRAPPER_MAX_PATHS, argv[++index]))
-            {
-                valid = false;
-            }
-        }
-        else if(p101_strcmp(env, argument, "--keep-going") == 0)
-        {
-            arguments->keep_going = true;
-        }
-        else if(p101_strcmp(env, argument, "--show-inventory") == 0)
-        {
-            arguments->show_inventory = true;
-        }
-        else if(p101_strcmp(env, argument, "--show-inventory-json") == 0)
-        {
-            arguments->show_inventory_json = true;
-        }
-        else if(p101_strcmp(env, argument, "--emit-module-facts") == 0)
-        {
-            arguments->emit_facts = true;
-        }
-        else if(p101_strcmp(env, argument, "--facts-output") == 0 && index + 1 < argc)
-        {
-            arguments->facts_output = argv[++index];
-        }
-        else if(p101_strcmp(env, argument, "--input-manifest") == 0 && index + 1 < argc)
-        {
-            arguments->input_manifest = argv[++index];
-        }
-        else if(p101_strcmp(env, argument, "--instrumentation-output") == 0 && index + 1 < argc)
-        {
-            arguments->instrumentation_output = argv[++index];
-        }
-        else if(p101_strcmp(env, argument, "--mutation-candidates-output") == 0 && index + 1 < argc)
-        {
-            arguments->mutation_output = argv[++index];
-        }
-        else if(p101_strcmp(env, argument, "--check-portability-includes") == 0)
-        {
-            arguments->check_portability = true;
-        }
-        else if(argument[0] == '-' || !add_value(arguments->paths, &arguments->path_count, P101_WRAPPER_MAX_PATHS, argument))
-        {
-            valid = false;
         }
     }
     if(valid && arguments->path_count == 0U)
@@ -270,7 +601,24 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
         arguments->paths[arguments->path_count++] = ".";
     }
     /* P101_ERROR_OPTIONAL rationale: automatic discovery is an optional convenience. */
-    if(valid && arguments->compile_database == NULL && p101_c_facts_find_clang_compile_database(env, P101_ERROR_OPTIONAL, arguments->paths[0], discovered, sizeof(discovered)))
+    p101_expression_result_51 = 0;
+    if(valid)
+    {
+        if(arguments->compile_database == NULL)
+        {
+            p101_expression_result_51 = 1;
+        }
+    }
+    p101_expression_result_50 = 0;
+    if(p101_expression_result_51)
+    {
+        p101_call_result_52 = p101_c_facts_find_clang_compile_database(env, P101_ERROR_OPTIONAL, arguments->paths[0], discovered, sizeof(discovered));
+        if(p101_call_result_52)
+        {
+            p101_expression_result_50 = 1;
+        }
+    }
+    if(p101_expression_result_50)
     {
         p101_snprintf(env, err, arguments->compile_database_storage, sizeof(arguments->compile_database_storage), "%s", discovered);
         arguments->compile_database = arguments->compile_database_storage;
@@ -284,6 +632,15 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
     {
         arguments->emit_facts = true;
     }
-    valid = (valid && p101_error_has_no_error(err)) != 0;
+    p101_expression_result_53 = 0;
+    if(valid)
+    {
+        p101_call_result_54 = p101_error_has_no_error(err);
+        if(p101_call_result_54)
+        {
+            p101_expression_result_53 = 1;
+        }
+    }
+    valid = p101_expression_result_53 != 0;
     return valid;
 }

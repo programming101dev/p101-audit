@@ -53,6 +53,7 @@ set(_COMMON_SOURCES
         ../src/cli.c
         ../src/inventory.c
         ../src/judge.c
+        ../src/judge_support.c
         ../src/model.c
         ../src/output.c)
 

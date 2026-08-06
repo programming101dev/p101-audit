@@ -149,6 +149,45 @@ printf '*\t\tc:@F@external_boundary\n' >"$work/allow.rules"
 "$audit" --strict-external "${semantic_allows[@]}" \
     --allow-file "$work/allow.rules" "$work" >/dev/null
 
+cat >"$work/trusted-api.h" <<'HEADER'
+int trusted_api(void);
+HEADER
+cat >"$work/trusted-api-use.c" <<'SOURCE'
+#include "trusted-api.h"
+
+int use_trusted_api(void)
+{
+    int result;
+
+    result = trusted_api();
+    return result;
+}
+SOURCE
+set +e
+"$audit" --strict-external --cflag="-I$work" \
+    "$work/trusted-api-use.c" >"$work/trusted-api-before.out" 2>&1
+status=$?
+set -e
+[ "$status" -eq 1 ]
+grep -q 'external-call: trusted_api' "$work/trusted-api-before.out"
+"$audit" --strict-external --cflag="-I$work" --header-root "$work/trusted-api.h" \
+    "$work/trusted-api-use.c" >/dev/null
+rm -f "$work/trusted-api.h" "$work/trusted-api-use.c"
+
+cat >"$work/errno-macro.c" <<'SOURCE'
+#include <errno.h>
+
+int saved_errno(void)
+{
+    int result;
+
+    result = errno;
+    return result;
+}
+SOURCE
+"$audit" --strict-external "$work/errno-macro.c" >/dev/null
+rm -f "$work/errno-macro.c"
+
 cat >"$work/builtin-format.c" <<'SOURCE'
 #include <stdarg.h>
 #include <stdio.h>

@@ -26,6 +26,7 @@ set(wrapper_audit_SOURCES
         src/cli.c
         src/inventory.c
         src/judge.c
+        src/judge_support.c
         src/main.c
         src/model.c
         src/output.c
@@ -36,6 +37,7 @@ set(c_facts_SOURCES
         src/facts_main.c
         src/inventory.c
         src/judge.c
+        src/judge_support.c
         src/model.c
         src/output.c
 )

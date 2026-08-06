@@ -49,14 +49,16 @@ static void copy_field(const struct p101_env *env, char *destination, size_t siz
 
 static bool grow_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model)
 {
+    void                          *p101_call_result_1;
     size_t                         capacity;
     struct p101_wrapper_inventory *inventory;
     bool                           grown;
 
     P101_TRACE_SCOPE(env);
-    grown     = false;
-    capacity  = model->inventory_capacity == 0U ? INITIAL_CAPACITY : model->inventory_capacity * 2U;
-    inventory = (struct p101_wrapper_inventory *)p101_realloc(env, err, model->inventory, capacity * sizeof(*inventory));
+    grown              = false;
+    capacity           = model->inventory_capacity == 0U ? INITIAL_CAPACITY : model->inventory_capacity * 2U;
+    p101_call_result_1 = p101_realloc(env, err, model->inventory, capacity * sizeof(*inventory));
+    inventory          = (struct p101_wrapper_inventory *)p101_call_result_1;
     if(inventory == NULL)
     {
         goto done;
@@ -71,6 +73,11 @@ done:
 
 static bool add_inventory_mapping(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *original, const char *original_usr, const char *wrapper, const char *wrapper_usr)
 {
+    int    p101_expression_result_17;
+    int    p101_expression_result_18;
+    int    p101_call_result_19;
+    int    p101_expression_result_20;
+    bool   p101_call_result_21;
     size_t index;
     bool   added;
 
@@ -78,7 +85,24 @@ static bool add_inventory_mapping(const struct p101_env *env, struct p101_error 
     added = true;
     for(index = 0U; index < model->inventory_count; index++)
     {
-        if(wrapper_usr != NULL && wrapper_usr[0] != '\0' && p101_strcmp(env, model->inventory[index].wrapper_usr, wrapper_usr) == 0)
+        p101_expression_result_18 = 0;
+        if(wrapper_usr != NULL)
+        {
+            if(wrapper_usr[0] != '\0')
+            {
+                p101_expression_result_18 = 1;
+            }
+        }
+        p101_expression_result_17 = 0;
+        if(p101_expression_result_18)
+        {
+            p101_call_result_19 = p101_strcmp(env, model->inventory[index].wrapper_usr, wrapper_usr);
+            if(p101_call_result_19 == 0)
+            {
+                p101_expression_result_17 = 1;
+            }
+        }
+        if(p101_expression_result_17)
         {
             if(original_usr != NULL && original_usr[0] != '\0' && model->inventory[index].original_usr[0] == '\0')
             {
@@ -88,7 +112,16 @@ static bool add_inventory_mapping(const struct p101_env *env, struct p101_error 
             goto done;
         }
     }
-    if(model->inventory_count == model->inventory_capacity && !grow_inventory(env, err, model))
+    p101_expression_result_20 = 0;
+    if(model->inventory_count == model->inventory_capacity)
+    {
+        p101_call_result_21 = grow_inventory(env, err, model);
+        if(!p101_call_result_21)
+        {
+            p101_expression_result_20 = 1;
+        }
+    }
+    if(p101_expression_result_20)
     {
         added = false;
         goto done;
@@ -133,6 +166,14 @@ static size_t split_manifest_fields(char *line, char *fields[], size_t capacity)
 
 static bool load_manifest_file(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *path)
 {
+    int    p101_call_result_16;
+    int    p101_call_result_15;
+    int    p101_call_result_13;
+    char  *p101_call_result_2;
+    int    p101_call_result_3;
+    int    p101_call_result_4;
+    int    p101_call_result_5;
+    bool   p101_call_result_6;
     FILE  *stream;
     char   line[MANIFEST_LINE_SIZE];
     size_t wrapper_column;
@@ -152,7 +193,8 @@ static bool load_manifest_file(const struct p101_env *env, struct p101_error *er
     {
         goto done;
     }
-    if(p101_fgets(env, err, line, sizeof(line), stream) != NULL)
+    p101_call_result_2 = p101_fgets(env, err, line, sizeof(line), stream);
+    if(p101_call_result_2 != NULL)
     {
         char  *fields[MANIFEST_FIELD_LIMIT];
         size_t field_count;
@@ -160,21 +202,34 @@ static bool load_manifest_file(const struct p101_env *env, struct p101_error *er
         field_count = split_manifest_fields(line, fields, sizeof(fields) / sizeof(fields[0]));
         for(size_t index = 0U; index < field_count; index++)
         {
-            if(p101_strcmp(env, fields[index], "function") == 0)
+            p101_call_result_3 = p101_strcmp(env, fields[index], "function");
+            if(p101_call_result_3 == 0)
             {
                 wrapper_column = index;
             }
-            else if(p101_strcmp(env, fields[index], "function_usr") == 0)
+            else
             {
-                wrapper_usr_column = index;
-            }
-            else if(p101_strcmp(env, fields[index], "native_function") == 0)
-            {
-                original_column = index;
-            }
-            else if(p101_strcmp(env, fields[index], "native_function_usr") == 0)
-            {
-                original_usr_column = index;
+                p101_call_result_13 = p101_strcmp(env, fields[index], "function_usr");
+                if(p101_call_result_13 == 0)
+                {
+                    wrapper_usr_column = index;
+                }
+                else
+                {
+                    p101_call_result_15 = p101_strcmp(env, fields[index], "native_function");
+                    if(p101_call_result_15 == 0)
+                    {
+                        original_column = index;
+                    }
+                    else
+                    {
+                        p101_call_result_16 = p101_strcmp(env, fields[index], "native_function_usr");
+                        if(p101_call_result_16 == 0)
+                        {
+                            original_usr_column = index;
+                        }
+                    }
+                }
             }
         }
     }
@@ -183,7 +238,7 @@ static bool load_manifest_file(const struct p101_env *env, struct p101_error *er
         P101_ERROR_RAISE_USER(err, "An API manifest lacks semantic wrapper/native identity columns.", 1);
         goto close_stream;
     }
-    while(p101_fgets(env, err, line, sizeof(line), stream) != NULL)
+    for(;;)
     {
         char       *fields[MANIFEST_FIELD_LIMIT];
         const char *original;
@@ -191,6 +246,11 @@ static bool load_manifest_file(const struct p101_env *env, struct p101_error *er
         size_t      field_count;
         size_t      maximum_column;
 
+        p101_call_result_2 = p101_fgets(env, err, line, sizeof(line), stream);
+        if(p101_call_result_2 == NULL)
+        {
+            break;
+        }
         field_count    = split_manifest_fields(line, fields, sizeof(fields) / sizeof(fields[0]));
         maximum_column = wrapper_column;
         if(wrapper_usr_column > maximum_column)
@@ -210,17 +270,20 @@ static bool load_manifest_file(const struct p101_env *env, struct p101_error *er
             P101_ERROR_RAISE_USER(err, "An API manifest row lacks semantic wrapper/native identity fields.", 1);
             break;
         }
-        original     = fields[original_column];
-        original_usr = fields[original_usr_column];
-        if(p101_strcmp(env, original, "-") == 0)
+        original           = fields[original_column];
+        original_usr       = fields[original_usr_column];
+        p101_call_result_4 = p101_strcmp(env, original, "-");
+        if(p101_call_result_4 == 0)
         {
             original = "";
         }
-        if(p101_strcmp(env, original_usr, "-") == 0)
+        p101_call_result_5 = p101_strcmp(env, original_usr, "-");
+        if(p101_call_result_5 == 0)
         {
             original_usr = "";
         }
-        if(!add_inventory_mapping(env, err, model, original, original_usr, fields[wrapper_column], fields[wrapper_usr_column]))
+        p101_call_result_6 = add_inventory_mapping(env, err, model, original, original_usr, fields[wrapper_column], fields[wrapper_usr_column]);
+        if(!p101_call_result_6)
         {
             break;
         }
@@ -236,6 +299,21 @@ done:
 
 static bool load_manifests(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *directory)    // NOLINT(misc-no-recursion)
 {
+    int            p101_expression_result_22;
+    int            p101_expression_result_23;
+    int            p101_expression_result_24;
+    int            p101_expression_result_25;
+    int            p101_call_result_26;
+    int            p101_call_result_27;
+    int            p101_call_result_28;
+    int            p101_call_result_29;
+    int            p101_call_result_30;
+    int            p101_expression_result_31;
+    int            p101_call_result_32;
+    int            p101_call_result_7;
+    bool           p101_call_result_8;
+    bool           p101_call_result_9;
+    bool           no_error;
     DIR           *stream;
     struct dirent *entry;
     bool           loaded;
@@ -247,31 +325,117 @@ static bool load_manifests(const struct p101_env *env, struct p101_error *err, s
     {
         goto done;
     }
-    while((entry = p101_readdir(env, err, stream)) != NULL && p101_error_has_no_error(err))
+    for(;;)
     {
         char        path[P101_WRAPPER_PATH_SIZE];
         struct stat status;
 
-        if(p101_strcmp(env, entry->d_name, ".") == 0 || p101_strcmp(env, entry->d_name, "..") == 0 || p101_strcmp(env, entry->d_name, ".git") == 0 || p101_strcmp(env, entry->d_name, "build") == 0 ||
-           p101_strncmp(env, entry->d_name, "build-", sizeof("build-") - 1U) == 0)
+        entry = p101_readdir(env, err, stream);
+        if(entry == NULL)
+        {
+            break;
+        }
+        no_error = p101_error_has_no_error(err);
+        if(!no_error)
+        {
+            break;
+        }
+        p101_call_result_26 = p101_strcmp(env, entry->d_name, ".");
+        if(p101_call_result_26 == 0)
+        {
+            p101_expression_result_25 = 1;
+        }
+        else
+        {
+            p101_call_result_27 = p101_strcmp(env, entry->d_name, "..");
+            if(p101_call_result_27 == 0)
+            {
+                p101_expression_result_25 = 1;
+            }
+            else
+            {
+                p101_expression_result_25 = 0;
+            }
+        }
+        if(p101_expression_result_25)
+        {
+            p101_expression_result_24 = 1;
+        }
+        else
+        {
+            p101_call_result_28 = p101_strcmp(env, entry->d_name, ".git");
+            if(p101_call_result_28 == 0)
+            {
+                p101_expression_result_24 = 1;
+            }
+            else
+            {
+                p101_expression_result_24 = 0;
+            }
+        }
+        if(p101_expression_result_24)
+        {
+            p101_expression_result_23 = 1;
+        }
+        else
+        {
+            p101_call_result_29 = p101_strcmp(env, entry->d_name, "build");
+            if(p101_call_result_29 == 0)
+            {
+                p101_expression_result_23 = 1;
+            }
+            else
+            {
+                p101_expression_result_23 = 0;
+            }
+        }
+        if(p101_expression_result_23)
+        {
+            p101_expression_result_22 = 1;
+        }
+        else
+        {
+            p101_call_result_30 = p101_strncmp(env, entry->d_name, "build-", sizeof("build-") - 1U);
+            if(p101_call_result_30 == 0)
+            {
+                p101_expression_result_22 = 1;
+            }
+            else
+            {
+                p101_expression_result_22 = 0;
+            }
+        }
+        if(p101_expression_result_22)
         {
             continue;
         }
         p101_snprintf(env, err, path, sizeof(path), "%s/%s", directory, entry->d_name);
-        if(p101_stat(env, err, path, &status) != 0)
+        p101_call_result_7 = p101_lstat(env, err, path, &status);
+        if(p101_call_result_7 != 0)
         {
             break;
         }
+        p101_expression_result_31 = 0;
+        if(S_ISREG(status.st_mode))
+        {
+            p101_call_result_32 = p101_strcmp(env, entry->d_name, "api-manifest.tsv");
+            if(p101_call_result_32 == 0)
+            {
+                p101_expression_result_31 = 1;
+            }
+        }
         if(S_ISDIR(status.st_mode))
         {
-            if(!load_manifests(env, err, model, path))
+            p101_call_result_8 = load_manifests(env, err, model, path);
+            if(!p101_call_result_8)
             {
                 break;
             }
         }
-        else if(S_ISREG(status.st_mode) && p101_strcmp(env, entry->d_name, "api-manifest.tsv") == 0)
+        else if(p101_expression_result_31)
         {
-            if(!load_manifest_file(env, err, model, path))
+            p101_call_result_9 = load_manifest_file(env, err, model, path);
+            if(!p101_call_result_9)
             {
                 break;
             }
@@ -286,6 +450,11 @@ done:
 
 static bool find_workspace_libraries(const struct p101_env *env, const char *program_path, char *path, size_t size)
 {
+    int    p101_expression_result_33;
+    char  *p101_call_result_34;
+    int    p101_expression_result_35;
+    int    p101_call_result_36;
+    char  *p101_call_result_14;
     char   current[P101_WRAPPER_PATH_SIZE];
     size_t attempt;
     bool   found;
@@ -293,7 +462,16 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
     P101_TRACE_SCOPE(env);
     found = false;
     /* P101_ERROR_OPTIONAL rationale: discovery probes candidate roots. */
-    if(program_path != NULL && p101_realpath(env, P101_ERROR_OPTIONAL, program_path, current) != NULL)
+    p101_expression_result_33 = 0;
+    if(program_path != NULL)
+    {
+        p101_call_result_34 = p101_realpath(env, P101_ERROR_OPTIONAL, program_path, current);
+        if(p101_call_result_34 != NULL)
+        {
+            p101_expression_result_33 = 1;
+        }
+    }
+    if(p101_expression_result_33)
     {
         const char *slash;
 
@@ -304,9 +482,13 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
         }
     }
     /* P101_ERROR_OPTIONAL rationale: discovery failure is returned as false. */
-    else if(p101_getcwd(env, P101_ERROR_OPTIONAL, current, sizeof(current)) == NULL)
+    else
     {
-        goto done;
+        p101_call_result_14 = p101_getcwd(env, P101_ERROR_OPTIONAL, current, sizeof(current));
+        if(p101_call_result_14 == NULL)
+        {
+            goto done;
+        }
     }
     for(attempt = 0U; attempt < WORKSPACE_PARENT_LIMIT; attempt++)
     {
@@ -316,7 +498,16 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
         /* P101_ERROR_OPTIONAL rationale: an empty path rejects this discovery candidate. */
         p101_snprintf(env, P101_ERROR_OPTIONAL, path, size, "%s/libraries", current);
         /* P101_ERROR_OPTIONAL rationale: discovery probes candidate roots. */
-        if(p101_stat(env, P101_ERROR_OPTIONAL, path, &status) == 0 && S_ISDIR(status.st_mode))
+        p101_call_result_36       = p101_stat(env, P101_ERROR_OPTIONAL, path, &status);
+        p101_expression_result_35 = 0;
+        if(p101_call_result_36 == 0)
+        {
+            if(S_ISDIR(status.st_mode))
+            {
+                p101_expression_result_35 = 1;
+            }
+        }
+        if(p101_expression_result_35)
         {
             found = true;
             break;
@@ -339,6 +530,14 @@ done:
 
 static bool add_annotated_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, size_t first_fact)
 {
+    int               p101_expression_result_37;
+    int               p101_expression_result_38;
+    int               p101_call_result_39;
+    int               p101_call_result_40;
+    int               p101_expression_result_41;
+    int               p101_expression_result_42;
+    int               p101_call_result_43;
+    int               p101_call_result_10;
     static const char wrapper_role[]    = "SEMANTIC_ROLE:p101:wrapper";
     static const char wrapper_of_role[] = "SEMANTIC_ROLE:p101:wrapper-of:";
     bool              added;
@@ -351,12 +550,38 @@ static bool add_annotated_inventory(const struct p101_env *env, struct p101_erro
         bool                            resolved;
 
         note = &model->facts[note_index];
-        if(note->kind != P101_C_ANALYSIS_NOTE || (p101_strcmp(env, note->name, wrapper_role) != 0 && p101_strncmp(env, note->name, wrapper_of_role, sizeof(wrapper_of_role) - 1U) != 0))
+        if(note->kind != P101_C_ANALYSIS_NOTE)
+        {
+            p101_expression_result_37 = 1;
+        }
+        else
+        {
+            p101_call_result_39       = p101_strcmp(env, note->name, wrapper_role);
+            p101_expression_result_38 = 0;
+            if(p101_call_result_39 != 0)
+            {
+                p101_call_result_40 = p101_strncmp(env, note->name, wrapper_of_role, sizeof(wrapper_of_role) - 1U);
+                if(p101_call_result_40 != 0)
+                {
+                    p101_expression_result_38 = 1;
+                }
+            }
+            if(p101_expression_result_38)
+            {
+                p101_expression_result_37 = 1;
+            }
+            else
+            {
+                p101_expression_result_37 = 0;
+            }
+        }
+        if(p101_expression_result_37)
         {
             continue;
         }
-        original_usr = "";
-        if(p101_strncmp(env, note->name, wrapper_of_role, sizeof(wrapper_of_role) - 1U) == 0)
+        original_usr        = "";
+        p101_call_result_10 = p101_strncmp(env, note->name, wrapper_of_role, sizeof(wrapper_of_role) - 1U);
+        if(p101_call_result_10 == 0)
         {
             original_usr = note->name + sizeof(wrapper_of_role) - 1U;
             if(original_usr[0] == '\0')
@@ -371,8 +596,25 @@ static bool add_annotated_inventory(const struct p101_env *env, struct p101_erro
         {
             const struct p101_wrapper_fact *function;
 
-            function = &model->facts[function_index];
-            if(function->kind == P101_C_ANALYSIS_FUNCTION && function->usr[0] != '\0' && p101_strcmp(env, function->usr, note->caller_usr) == 0)
+            function                  = &model->facts[function_index];
+            p101_expression_result_42 = 0;
+            if(function->kind == P101_C_ANALYSIS_FUNCTION)
+            {
+                if(function->usr[0] != '\0')
+                {
+                    p101_expression_result_42 = 1;
+                }
+            }
+            p101_expression_result_41 = 0;
+            if(p101_expression_result_42)
+            {
+                p101_call_result_43 = p101_strcmp(env, function->usr, note->caller_usr);
+                if(p101_call_result_43 == 0)
+                {
+                    p101_expression_result_41 = 1;
+                }
+            }
+            if(p101_expression_result_41)
             {
                 added    = add_inventory_mapping(env, err, model, "", original_usr, function->name, function->usr);
                 resolved = true;
@@ -388,15 +630,94 @@ static bool add_annotated_inventory(const struct p101_env *env, struct p101_erro
     return added;
 }
 
+static bool path_is_within_header_root(const struct p101_env *env, const char *path, const char *root)
+{
+    char   canonical_root[P101_WRAPPER_PATH_SIZE];
+    char  *resolved;
+    size_t root_length;
+    size_t path_length;
+    int    comparison;
+    bool   within;
+
+    P101_TRACE_SCOPE(env);
+    within   = false;
+    resolved = p101_realpath(env, P101_ERROR_OPTIONAL, root, canonical_root);
+    if(resolved == NULL)
+    {
+        goto done;
+    }
+    comparison = p101_strcmp(env, path, canonical_root);
+    if(comparison == 0)
+    {
+        within = true;
+        goto done;
+    }
+    root_length = p101_strlen(env, canonical_root);
+    path_length = p101_strlen(env, path);
+    if(path_length <= root_length || path[root_length] != '/')
+    {
+        goto done;
+    }
+    comparison = p101_strncmp(env, path, canonical_root, root_length);
+    if(comparison == 0)
+    {
+        within = true;
+    }
+
+done:
+    return within;
+}
+
+static bool add_public_header_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, size_t first_fact, const char *root)
+{
+    bool added;
+
+    P101_TRACE_SCOPE(env);
+    added = true;
+    for(size_t index = first_fact; added && index < model->fact_count; index++)
+    {
+        const struct p101_wrapper_fact *function;
+        bool                            admitted;
+
+        function = &model->facts[index];
+        if(function->kind != P101_C_ANALYSIS_FUNCTION || function->is_definition || !function->is_public || function->usr[0] == '\0')
+        {
+            continue;
+        }
+        admitted = path_is_within_header_root(env, function->path, root);
+        if(!admitted)
+        {
+            continue;
+        }
+        added = add_inventory_mapping(env, err, model, "", "", function->name, function->usr);
+    }
+    return added;
+}
+
 bool p101_wrapper_model_load_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const struct p101_wrapper_arguments *arguments, const char *program_path)
 {
+    int    p101_expression_result_44;
+    bool   p101_call_result_45;
+    bool   p101_call_result_46;
+    bool   p101_call_result_11;
+    bool   p101_call_result_12;
     char   libraries[P101_WRAPPER_PATH_SIZE];
     size_t index;
     bool   loaded;
 
     P101_TRACE_SCOPE(env);
-    loaded = true;
-    if(find_workspace_libraries(env, program_path, libraries, sizeof(libraries)) && !load_manifests(env, err, model, libraries))
+    loaded                    = true;
+    p101_call_result_45       = find_workspace_libraries(env, program_path, libraries, sizeof(libraries));
+    p101_expression_result_44 = 0;
+    if(p101_call_result_45)
+    {
+        p101_call_result_46 = load_manifests(env, err, model, libraries);
+        if(!p101_call_result_46)
+        {
+            p101_expression_result_44 = 1;
+        }
+    }
+    if(p101_expression_result_44)
     {
         loaded = false;
     }
@@ -416,14 +737,24 @@ bool p101_wrapper_model_load_inventory(const struct p101_env *env, struct p101_e
         options.detailed_preprocessing               = true;
         options.include_headers_as_translation_units = true;
         options.keep_going                           = true;
-        if(!p101_c_analysis_scan(env, err, &options, p101_wrapper_analysis_observer, model))
+        p101_call_result_11                          = p101_c_analysis_scan(env, err, &options, p101_wrapper_analysis_observer, model);
+        if(!p101_call_result_11)
         {
             loaded = false;
             break;
         }
-        if(!add_annotated_inventory(env, err, model, first_fact))
+        p101_call_result_12 = add_annotated_inventory(env, err, model, first_fact);
+        if(!p101_call_result_12)
         {
             loaded = false;
+        }
+        if(loaded)
+        {
+            p101_call_result_12 = add_public_header_inventory(env, err, model, first_fact, path);
+            if(!p101_call_result_12)
+            {
+                loaded = false;
+            }
         }
         model->fact_count = first_fact;
     }

@@ -46,9 +46,10 @@ Options:
   remains scoped and stale exceptions are removed.
 - `--cflag FLAG` adds a compiler flag for files not present in a compile
   database; may be repeated.
-- `--header-root DIR` adds an annotated wrapper inventory root. Declarations
-  must carry `p101:wrapper` or `p101:wrapper-of:<callee-usr>` semantic roles;
-  spelling a function `p101_*` is not evidence that it is a wrapper.
+- `--header-root PATH` trusts public function declarations under an explicitly
+  admitted header file or directory and also consumes `p101:wrapper` and
+  `p101:wrapper-of:<callee-usr>` semantic roles. Admission uses AST declaration
+  identity and source location; spelling a function `p101_*` is not evidence.
 - `--keep-going` continues after translation-unit parse failures, reports the
   skipped files, and still exits non-clean so incomplete audits cannot pass
   silently.
