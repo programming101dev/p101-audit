@@ -169,7 +169,7 @@ void p101_wrapper_write_inventory(const struct p101_env *env, struct p101_error 
     P101_TRACE_SCOPE(env);
     if(json)
     {
-        p101_fputs(env, err, "{\"schema\":\"p101-wrapper-inventory-v2\",\"wrappers\":[", stdout);
+        p101_fputs(env, err, "{\"schema\":\"p101-wrapper-inventory-v3\",\"wrappers\":[", stdout);
     }
     for(index = 0U; index < model->inventory_count; index++)
     {
@@ -181,13 +181,17 @@ void p101_wrapper_write_inventory(const struct p101_env *env, struct p101_error 
             }
             p101_fputs(env, err, "{\"original\":", stdout);
             p101_wrapper_output_json_string(env, err, stdout, model->inventory[index].original);
+            p101_fputs(env, err, ",\"original_usr\":", stdout);
+            p101_wrapper_output_json_string(env, err, stdout, model->inventory[index].original_usr);
             p101_fputs(env, err, ",\"wrapper\":", stdout);
             p101_wrapper_output_json_string(env, err, stdout, model->inventory[index].wrapper);
+            p101_fputs(env, err, ",\"wrapper_usr\":", stdout);
+            p101_wrapper_output_json_string(env, err, stdout, model->inventory[index].wrapper_usr);
             p101_fputc(env, err, '}', stdout);
         }
         else
         {
-            p101_fprintf(env, err, stdout, "%s\t%s\n", model->inventory[index].original, model->inventory[index].wrapper);
+            p101_fprintf(env, err, stdout, "%s\t%s\t%s\t%s\n", model->inventory[index].original, model->inventory[index].original_usr, model->inventory[index].wrapper, model->inventory[index].wrapper_usr);
         }
     }
     if(json)
@@ -337,7 +341,7 @@ static void write_fact_prefix(const struct p101_env *env, struct p101_error *err
     char module[P101_WRAPPER_NAME_SIZE];
 
     module_name(env, fact->path, module, sizeof(module));
-    p101_fputs(env, err, "P101FACT\t4\t", stream);
+    p101_fputs(env, err, "P101FACT\t6\t", stream);
     p101_fputs(env, err, p101_c_analysis_kind_name(fact->kind), stream);
     p101_fputc(env, err, '\t', stream);
     tsv_string(env, err, stream, fact->path);
@@ -364,7 +368,7 @@ void p101_wrapper_write_facts(const struct p101_env *env, struct p101_error *err
         {
             continue;
         }
-        if((fact->kind == P101_C_ANALYSIS_TYPE || fact->kind == P101_C_ANALYSIS_ENUM || fact->kind == P101_C_ANALYSIS_ENUMERATOR || fact->kind == P101_C_ANALYSIS_MACRO) && !fact->is_header)
+        if((fact->kind == P101_C_ANALYSIS_TYPE || fact->kind == P101_C_ANALYSIS_ENUM || fact->kind == P101_C_ANALYSIS_ENUMERATOR || (fact->kind == P101_C_ANALYSIS_MACRO && fact->is_definition)) && !fact->is_header)
         {
             continue;
         }
@@ -375,10 +379,20 @@ void p101_wrapper_write_facts(const struct p101_env *env, struct p101_error *err
             tsv_string(env, err, stream, fact->name);
             p101_fprintf(env, err, stream, "\t%s", bool_text(fact->is_local_include));
         }
-        else if(fact->kind == P101_C_ANALYSIS_TYPE || fact->kind == P101_C_ANALYSIS_ENUM || fact->kind == P101_C_ANALYSIS_MACRO)
+        else if(fact->kind == P101_C_ANALYSIS_TYPE || fact->kind == P101_C_ANALYSIS_ENUM)
         {
             p101_fputc(env, err, '\t', stream);
             tsv_string(env, err, stream, fact->name);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->usr);
+        }
+        else if(fact->kind == P101_C_ANALYSIS_MACRO)
+        {
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->name);
+            p101_fprintf(env, err, stream, "\t%s\t", bool_text(fact->is_definition));
+            tsv_string(env, err, stream, fact->caller_usr);
+            p101_fprintf(env, err, stream, "\t%zu\t%zu", fact->start, fact->end);
         }
         else if(fact->kind == P101_C_ANALYSIS_ENUMERATOR)
         {
@@ -386,6 +400,10 @@ void p101_wrapper_write_facts(const struct p101_env *env, struct p101_error *err
             tsv_string(env, err, stream, fact->name);
             p101_fputc(env, err, '\t', stream);
             tsv_string(env, err, stream, fact->type);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->usr);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->caller_usr);
         }
         else if(fact->kind == P101_C_ANALYSIS_NOTE)
         {
@@ -394,6 +412,9 @@ void p101_wrapper_write_facts(const struct p101_env *env, struct p101_error *err
             p101_fputc(env, err, '\t', stream);
             tsv_string(env, err, stream, fact->caller);
             p101_fprintf(env, err, stream, "\t%zu", fact->column);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->caller_usr);
+            p101_fprintf(env, err, stream, "\t%zu\t%zu", fact->start, fact->end);
         }
         else if(fact->kind == P101_C_ANALYSIS_FUNCTION)
         {
@@ -407,14 +428,22 @@ void p101_wrapper_write_facts(const struct p101_env *env, struct p101_error *err
                 declaration = true;
             }
             p101_fprintf(env, err, stream, "\t%s\t%s", bool_text(fact->is_static), bool_text(declaration));
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->usr);
+            p101_fprintf(env, err, stream, "\t%zu\t%zu", fact->start, fact->end);
         }
         else if(fact->kind == P101_C_ANALYSIS_CALL)
         {
             p101_fputc(env, err, '\t', stream);
             tsv_string(env, err, stream, fact->name);
-            p101_fprintf(env, err, stream, "\t%s\t%s", bool_text(fact->needs_env), bool_text(fact->needs_error));
+            p101_fprintf(env, err, stream, "\t%s\t%s\t%s", bool_text(fact->needs_env), bool_text(fact->needs_error), bool_text(fact->is_indirect));
             p101_fputc(env, err, '\t', stream);
             tsv_string(env, err, stream, fact->caller);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->usr);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->caller_usr);
+            p101_fprintf(env, err, stream, "\t%zu\t%zu", fact->start, fact->end);
         }
         p101_fputc(env, err, '\n', stream);
     }

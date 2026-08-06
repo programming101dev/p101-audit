@@ -23,17 +23,17 @@ struct p101_wrapper_arguments
     size_t      header_root_count;
     const char *extra_arguments[P101_WRAPPER_MAX_NAMES];
     size_t      extra_argument_count;
-    const char *allowed[P101_WRAPPER_MAX_NAMES];
-    char        allowed_storage[P101_WRAPPER_MAX_NAMES][P101_WRAPPER_NAME_SIZE];
-    size_t      allowed_count;
+    const char *allowed_usrs[P101_WRAPPER_MAX_NAMES];
+    char        allowed_usr_storage[P101_WRAPPER_MAX_NAMES][P101_WRAPPER_NAME_SIZE];
+    size_t      allowed_usr_count;
     const char *allow_files[P101_WRAPPER_MAX_PATHS];
     size_t      allow_file_count;
 
     struct
     {
         char   path[P101_WRAPPER_PATH_SIZE];
-        char   function[P101_WRAPPER_NAME_SIZE];
-        char   callee[P101_WRAPPER_NAME_SIZE];
+        char   caller_usr[P101_WRAPPER_NAME_SIZE];
+        char   callee_usr[P101_WRAPPER_NAME_SIZE];
         size_t uses;
     } allow_rules[P101_WRAPPER_MAX_NAMES];
 
@@ -62,6 +62,8 @@ struct p101_wrapper_fact
     char                      name[P101_WRAPPER_NAME_SIZE];
     char                      type[P101_WRAPPER_NAME_SIZE];
     char                      caller[P101_WRAPPER_NAME_SIZE];
+    char                      usr[P101_WRAPPER_NAME_SIZE];
+    char                      caller_usr[P101_WRAPPER_NAME_SIZE];
     char                      replacement[P101_WRAPPER_NAME_SIZE];
     size_t                    line;
     size_t                    column;
@@ -81,7 +83,9 @@ struct p101_wrapper_fact
 struct p101_wrapper_inventory
 {
     char original[P101_WRAPPER_NAME_SIZE];
+    char original_usr[P101_WRAPPER_NAME_SIZE];
     char wrapper[P101_WRAPPER_NAME_SIZE];
+    char wrapper_usr[P101_WRAPPER_NAME_SIZE];
 };
 
 enum p101_wrapper_finding_kind

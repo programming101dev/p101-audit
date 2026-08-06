@@ -5,32 +5,20 @@
 #include <p101_c/p101_stdlib.h>
 #include <p101_c/p101_string.h>
 #include <p101_filesystem/filesystem.h>
+#include <stdint.h>
 #include <sys/stat.h>
 
 enum
 {
     INITIAL_CAPACITY       = 256,
+    MANIFEST_FIELD_LIMIT   = 32,
     MANIFEST_LINE_SIZE     = 1024,
     WORKSPACE_PARENT_LIMIT = 8
 };
 
-static bool add_inventory_mapping(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *original, const char *wrapper);
-
-static bool inventory_has_original(const struct p101_env *env, const struct p101_wrapper_model *model, const char *name)
-{
-    bool found;
-
-    found = false;
-    for(size_t index = 0U; index < model->inventory_count; index++)
-    {
-        if(p101_strcmp(env, model->inventory[index].original, name) == 0)
-        {
-            found = true;
-            break;
-        }
-    }
-    return found;
-}
+static bool   add_inventory_mapping(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *original, const char *original_usr, const char *wrapper, const char *wrapper_usr);
+static size_t split_manifest_fields(char *line, char *fields[], size_t capacity);
+static bool   add_annotated_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, size_t first_fact);
 
 static void copy_field(const struct p101_env *env, char *destination, size_t size, const char *source)
 {
@@ -72,25 +60,7 @@ done:
     return grown;
 }
 
-static bool add_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *wrapper)
-{
-    const char *original;
-    bool        added;
-
-    P101_TRACE_SCOPE(env);
-    added = true;
-    if(wrapper == NULL || p101_strncmp(env, wrapper, "p101_", sizeof("p101_") - 1U) != 0)
-    {
-        goto done;
-    }
-    original = wrapper + sizeof("p101_") - 1U;
-    added    = add_inventory_mapping(env, err, model, original, wrapper);
-
-done:
-    return added;
-}
-
-static bool add_inventory_mapping(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *original, const char *wrapper)
+static bool add_inventory_mapping(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *original, const char *original_usr, const char *wrapper, const char *wrapper_usr)
 {
     size_t index;
     bool   added;
@@ -99,8 +69,13 @@ static bool add_inventory_mapping(const struct p101_env *env, struct p101_error 
     added = true;
     for(index = 0U; index < model->inventory_count; index++)
     {
-        if(p101_strcmp(env, model->inventory[index].original, original) == 0)
+        if(wrapper_usr != NULL && wrapper_usr[0] != '\0' && p101_strcmp(env, model->inventory[index].wrapper_usr, wrapper_usr) == 0)
         {
+            if(original_usr != NULL && original_usr[0] != '\0' && model->inventory[index].original_usr[0] == '\0')
+            {
+                copy_field(env, model->inventory[index].original, sizeof(model->inventory[index].original), original);
+                copy_field(env, model->inventory[index].original_usr, sizeof(model->inventory[index].original_usr), original_usr);
+            }
             goto done;
         }
     }
@@ -110,85 +85,139 @@ static bool add_inventory_mapping(const struct p101_env *env, struct p101_error 
         goto done;
     }
     copy_field(env, model->inventory[model->inventory_count].original, sizeof(model->inventory[model->inventory_count].original), original);
+    copy_field(env, model->inventory[model->inventory_count].original_usr, sizeof(model->inventory[model->inventory_count].original_usr), original_usr);
     copy_field(env, model->inventory[model->inventory_count].wrapper, sizeof(model->inventory[model->inventory_count].wrapper), wrapper);
+    copy_field(env, model->inventory[model->inventory_count].wrapper_usr, sizeof(model->inventory[model->inventory_count].wrapper_usr), wrapper_usr);
     model->inventory_count++;
 
 done:
     return added;
 }
 
-static bool add_atomic_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model)
+static size_t split_manifest_fields(char *line, char *fields[], size_t capacity)
 {
-    static const struct
-    {
-        const char *original;
-        const char *wrapper;
-    } mappings[] = {
-        {"atomic_compare_exchange_strong",          "p101_atomic_uint_compare_exchange_strong"         },
-        {"atomic_compare_exchange_strong_explicit", "p101_atomic_uint_compare_exchange_strong_explicit"},
-        {"atomic_compare_exchange_weak",            "p101_atomic_uint_compare_exchange_weak"           },
-        {"atomic_compare_exchange_weak_explicit",   "p101_atomic_uint_compare_exchange_weak_explicit"  },
-        {"atomic_exchange",                         "p101_atomic_uint_exchange"                        },
-        {"atomic_exchange_explicit",                "p101_atomic_uint_exchange_explicit"               },
-        {"atomic_fetch_add",                        "p101_atomic_uint_fetch_add"                       },
-        {"atomic_fetch_add_explicit",               "p101_atomic_uint_fetch_add_explicit"              },
-        {"atomic_fetch_and",                        "p101_atomic_uint_fetch_and"                       },
-        {"atomic_fetch_and_explicit",               "p101_atomic_uint_fetch_and_explicit"              },
-        {"atomic_fetch_or",                         "p101_atomic_uint_fetch_or"                        },
-        {"atomic_fetch_or_explicit",                "p101_atomic_uint_fetch_or_explicit"               },
-        {"atomic_fetch_sub",                        "p101_atomic_uint_fetch_sub"                       },
-        {"atomic_fetch_sub_explicit",               "p101_atomic_uint_fetch_sub_explicit"              },
-        {"atomic_fetch_xor",                        "p101_atomic_uint_fetch_xor"                       },
-        {"atomic_fetch_xor_explicit",               "p101_atomic_uint_fetch_xor_explicit"              },
-        {"atomic_load",                             "p101_atomic_uint_load"                            },
-        {"atomic_load_explicit",                    "p101_atomic_uint_load_explicit"                   },
-        {"atomic_store",                            "p101_atomic_uint_store"                           },
-        {"atomic_store_explicit",                   "p101_atomic_uint_store_explicit"                  },
-    };
+    size_t count;
+    char  *cursor;
 
-    size_t index;
-    bool   added;
-
-    P101_TRACE_SCOPE(env);
-    added = true;
-    for(index = 0U; index < sizeof(mappings) / sizeof(mappings[0]); index++)
+    count  = 0U;
+    cursor = line;
+    while(count < capacity)
     {
-        if(!inventory_has_original(env, model, mappings[index].original) && !add_inventory_mapping(env, err, model, mappings[index].original, mappings[index].wrapper))
+        char *separator;
+
+        fields[count++] = cursor;
+        separator       = cursor;
+        while(*separator != '\0' && *separator != '\t' && *separator != '\n' && *separator != '\r')
         {
-            added = false;
+            separator++;
+        }
+        if(*separator == '\0' || *separator == '\n' || *separator == '\r')
+        {
+            *separator = '\0';
             break;
         }
+        *separator = '\0';
+        cursor     = separator + 1;
     }
-    return added;
+    return count;
 }
 
 static bool load_manifest_file(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *path)
 {
-    FILE *stream;
-    char  line[MANIFEST_LINE_SIZE];
-    bool  loaded;
+    FILE  *stream;
+    char   line[MANIFEST_LINE_SIZE];
+    size_t wrapper_column;
+    size_t wrapper_usr_column;
+    size_t original_column;
+    size_t original_usr_column;
+    bool   loaded;
 
     P101_TRACE_SCOPE(env);
-    loaded = false;
-    stream = p101_fopen(env, err, path, "r");
+    loaded              = false;
+    wrapper_column      = SIZE_MAX;
+    wrapper_usr_column  = SIZE_MAX;
+    original_column     = SIZE_MAX;
+    original_usr_column = SIZE_MAX;
+    stream              = p101_fopen(env, err, path, "r");
     if(stream == NULL)
     {
         goto done;
     }
+    if(p101_fgets(env, err, line, sizeof(line), stream) != NULL)
+    {
+        char  *fields[MANIFEST_FIELD_LIMIT];
+        size_t field_count;
+
+        field_count = split_manifest_fields(line, fields, sizeof(fields) / sizeof(fields[0]));
+        for(size_t index = 0U; index < field_count; index++)
+        {
+            if(p101_strcmp(env, fields[index], "function") == 0)
+            {
+                wrapper_column = index;
+            }
+            else if(p101_strcmp(env, fields[index], "function_usr") == 0)
+            {
+                wrapper_usr_column = index;
+            }
+            else if(p101_strcmp(env, fields[index], "native_function") == 0)
+            {
+                original_column = index;
+            }
+            else if(p101_strcmp(env, fields[index], "native_function_usr") == 0)
+            {
+                original_usr_column = index;
+            }
+        }
+    }
+    if(wrapper_column == SIZE_MAX || wrapper_usr_column == SIZE_MAX || original_column == SIZE_MAX || original_usr_column == SIZE_MAX)
+    {
+        P101_ERROR_RAISE_USER(err, "An API manifest lacks semantic wrapper/native identity columns.", 1);
+        goto close_stream;
+    }
     while(p101_fgets(env, err, line, sizeof(line), stream) != NULL)
     {
-        const char *tab;
+        char       *fields[MANIFEST_FIELD_LIMIT];
+        const char *original;
+        const char *original_usr;
+        size_t      field_count;
+        size_t      maximum_column;
 
-        tab = p101_strchr(env, line, '\t');
-        if(tab != NULL)
+        field_count    = split_manifest_fields(line, fields, sizeof(fields) / sizeof(fields[0]));
+        maximum_column = wrapper_column;
+        if(wrapper_usr_column > maximum_column)
         {
-            line[(size_t)(tab - line)] = '\0';
+            maximum_column = wrapper_usr_column;
         }
-        if(p101_strncmp(env, line, "p101_", sizeof("p101_") - 1U) == 0 && !add_inventory(env, err, model, line))
+        if(original_column > maximum_column)
+        {
+            maximum_column = original_column;
+        }
+        if(original_usr_column > maximum_column)
+        {
+            maximum_column = original_usr_column;
+        }
+        if(field_count <= maximum_column)
+        {
+            P101_ERROR_RAISE_USER(err, "An API manifest row lacks semantic wrapper/native identity fields.", 1);
+            break;
+        }
+        original     = fields[original_column];
+        original_usr = fields[original_usr_column];
+        if(p101_strcmp(env, original, "-") == 0)
+        {
+            original = "";
+        }
+        if(p101_strcmp(env, original_usr, "-") == 0)
+        {
+            original_usr = "";
+        }
+        if(!add_inventory_mapping(env, err, model, original, original_usr, fields[wrapper_column], fields[wrapper_usr_column]))
         {
             break;
         }
     }
+
+close_stream:
     p101_fclose(env, err, stream);
     loaded = p101_error_has_no_error(err);
 
@@ -254,8 +283,8 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
 
     P101_TRACE_SCOPE(env);
     found = false;
-    /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: discovery probes candidate roots. */
-    if(program_path != NULL && p101_realpath(env, NULL, program_path, current) != NULL)
+    /* P101_ERROR_OPTIONAL rationale: discovery probes candidate roots. */
+    if(program_path != NULL && p101_realpath(env, P101_ERROR_OPTIONAL, program_path, current) != NULL)
     {
         const char *slash;
 
@@ -265,8 +294,8 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
             current[(size_t)(slash - current)] = '\0';
         }
     }
-    /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: discovery failure is returned as false. */
-    else if(p101_getcwd(env, NULL, current, sizeof(current)) == NULL)
+    /* P101_ERROR_OPTIONAL rationale: discovery failure is returned as false. */
+    else if(p101_getcwd(env, P101_ERROR_OPTIONAL, current, sizeof(current)) == NULL)
     {
         goto done;
     }
@@ -275,10 +304,10 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
         struct stat status;
         const char *slash;
 
-        /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: an empty path rejects this discovery candidate. */
-        p101_snprintf(env, NULL, path, size, "%s/libraries", current);
-        /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: discovery probes candidate roots. */
-        if(p101_stat(env, NULL, path, &status) == 0 && S_ISDIR(status.st_mode))
+        /* P101_ERROR_OPTIONAL rationale: an empty path rejects this discovery candidate. */
+        p101_snprintf(env, P101_ERROR_OPTIONAL, path, size, "%s/libraries", current);
+        /* P101_ERROR_OPTIONAL rationale: discovery probes candidate roots. */
+        if(p101_stat(env, P101_ERROR_OPTIONAL, path, &status) == 0 && S_ISDIR(status.st_mode))
         {
             found = true;
             break;
@@ -299,6 +328,57 @@ done:
     return found;
 }
 
+static bool add_annotated_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, size_t first_fact)
+{
+    static const char wrapper_role[]    = "SEMANTIC_ROLE:p101:wrapper";
+    static const char wrapper_of_role[] = "SEMANTIC_ROLE:p101:wrapper-of:";
+    bool              added;
+
+    added = true;
+    for(size_t note_index = first_fact; added && note_index < model->fact_count; note_index++)
+    {
+        const struct p101_wrapper_fact *note;
+        const char                     *original_usr;
+        bool                            resolved;
+
+        note = &model->facts[note_index];
+        if(note->kind != P101_C_ANALYSIS_NOTE || (p101_strcmp(env, note->name, wrapper_role) != 0 && p101_strncmp(env, note->name, wrapper_of_role, sizeof(wrapper_of_role) - 1U) != 0))
+        {
+            continue;
+        }
+        original_usr = "";
+        if(p101_strncmp(env, note->name, wrapper_of_role, sizeof(wrapper_of_role) - 1U) == 0)
+        {
+            original_usr = note->name + sizeof(wrapper_of_role) - 1U;
+            if(original_usr[0] == '\0')
+            {
+                P101_ERROR_RAISE_USER(err, "A wrapper-of semantic role lacks a callee identity.", 1);
+                added = false;
+                break;
+            }
+        }
+        resolved = false;
+        for(size_t function_index = first_fact; function_index < model->fact_count; function_index++)
+        {
+            const struct p101_wrapper_fact *function;
+
+            function = &model->facts[function_index];
+            if(function->kind == P101_C_ANALYSIS_FUNCTION && function->usr[0] != '\0' && p101_strcmp(env, function->usr, note->caller_usr) == 0)
+            {
+                added    = add_inventory_mapping(env, err, model, "", original_usr, function->name, function->usr);
+                resolved = true;
+                break;
+            }
+        }
+        if(!resolved)
+        {
+            P101_ERROR_RAISE_USER(err, "A wrapper semantic role does not resolve to an admitted function declaration.", 1);
+            added = false;
+        }
+    }
+    return added;
+}
+
 bool p101_wrapper_model_load_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const struct p101_wrapper_arguments *arguments, const char *program_path)
 {
     char   libraries[P101_WRAPPER_PATH_SIZE];
@@ -316,7 +396,6 @@ bool p101_wrapper_model_load_inventory(const struct p101_env *env, struct p101_e
         struct p101_c_analysis_options options;
         const char                    *path;
         size_t                         first_fact;
-        size_t                         fact_index;
 
         path       = arguments->header_roots[index];
         first_fact = model->fact_count;
@@ -333,19 +412,11 @@ bool p101_wrapper_model_load_inventory(const struct p101_env *env, struct p101_e
             loaded = false;
             break;
         }
-        for(fact_index = first_fact; fact_index < model->fact_count; fact_index++)
+        if(!add_annotated_inventory(env, err, model, first_fact))
         {
-            if(model->facts[fact_index].kind == P101_C_ANALYSIS_FUNCTION && !add_inventory(env, err, model, model->facts[fact_index].name))
-            {
-                loaded = false;
-                break;
-            }
+            loaded = false;
         }
         model->fact_count = first_fact;
-    }
-    if(loaded && !add_atomic_inventory(env, err, model))
-    {
-        loaded = false;
     }
     if(loaded && model->inventory_count == 0U)
     {

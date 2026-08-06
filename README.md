@@ -28,7 +28,7 @@ Options:
 
 - `-j`, `--json` emits JSON.
 - `-e`, `--strict-external` makes unmapped external and indirect calls fail too.
-- `-a NAME`, `--allow NAME` allows an external callee name.
+- `--allow-usr USR` allows one exact external declaration identity.
 - `--compile-db compile_commands.json` uses a specific compile database.
 - `--compile-db-only` audits only active translation units in that database.
 - `--active-headers-only` derives header facts from those active translation
@@ -37,23 +37,31 @@ Options:
   under the C++ command that actually includes it.
   This is useful for portable projects that retain platform-specific source
   files which are intentionally not built on the current host.
-- `--allow-file FILE` reads intentional boundary rules in
-  `path:function:callee` form. `*` may stand for the path or function, blank
-  lines and `#` comments are ignored, and an unused rule is tool trouble. Keep
-  this file in the audited repo so every exception remains scoped and stale
-  exceptions are removed.
+- `--allow-file FILE` reads intentional boundary rules as tab-separated
+  `path`, optional `caller_usr`, and required `callee_usr` columns. Paths use
+  glob matching because filesystem paths are textual identifiers. Caller and
+  callee identities are compared exactly; they come from libclang rather than
+  source spellings. Blank lines and `#` comments are ignored, and an unused
+  rule is tool trouble. Keep this file in the audited repo so every exception
+  remains scoped and stale exceptions are removed.
 - `--cflag FLAG` adds a compiler flag for files not present in a compile
   database; may be repeated.
-- `--header-root DIR` adds a p101 header inventory root.
+- `--header-root DIR` adds an annotated wrapper inventory root. Declarations
+  must carry `p101:wrapper` or `p101:wrapper-of:<callee-usr>` semantic roles;
+  spelling a function `p101_*` is not evidence that it is a wrapper.
 - `--keep-going` continues after translation-unit parse failures, reports the
   skipped files, and still exits non-clean so incomplete audits cannot pass
   silently.
-- `--show-inventory` prints the generated `original -> p101_wrapper` inventory.
+- `--show-inventory` prints the reviewed native/wrapper names and AST
+  identities. Workspace mappings come from the semantic columns in each
+  `api-manifest.tsv`; the tool never derives a native API by trimming a name.
+  A `-` in both native-identity columns explicitly means that the public API
+  has no direct native counterpart.
 - `--show-inventory-json` prints the same inventory as machine-readable JSON.
 - `--emit-module-facts` emits the Clang-derived TSV fact stream parsed by
   `lib_c_facts` and consumed by `p101-module-map`; see
   [docs/module-facts.md](docs/module-facts.md).
-- `--facts-output FILE` writes the same P101FACT v4 snapshot while the wrapper
+- `--facts-output FILE` writes the same P101FACT v6 snapshot while the wrapper
   audit runs, so later policy tools reuse the exact AST evidence.
 - `--input-manifest FILE` writes a JSON receipt containing the selected compile
   database and modes, explicit paths, header roots, extra parser arguments,

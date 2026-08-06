@@ -12,8 +12,8 @@ Quick reference for the native C `p101-wrapper-audit`, backed by
 | `./p101-wrapper-audit --compile-db compile_commands.json src include` | Audit with exact compiler flags from a compile database |
 | `./p101-wrapper-audit -j src include` | Emit JSON |
 | `./p101-wrapper-audit -e src include` | Treat unmapped external calls as findings too |
-| `./p101-wrapper-audit -a TEST_ASSERT_EQUAL_INT test src` | Allow a specific external callee |
-| `./p101-wrapper-audit --show-inventory` | Print the generated `original -> p101_wrapper` inventory |
+| `./p101-wrapper-audit --allow-usr 'c:@F@TEST_ASSERT_EQUAL_INT' test src` | Allow one exact external declaration identity |
+| `./p101-wrapper-audit --show-inventory` | Print the explicit native/wrapper identity inventory |
 | `./p101-wrapper-audit --show-inventory-json` | Print the generated wrapper inventory as JSON |
 
 Exit status: `0` means no missed wrappers, `1` means missed wrappers or strict

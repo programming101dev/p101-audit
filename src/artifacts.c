@@ -13,43 +13,36 @@ struct instrumentation_capabilities
     bool resource;
 };
 
-static void add_call_capability(const struct p101_env *env, struct instrumentation_capabilities *capabilities, const char *name)
+static void add_role_capability(const struct p101_env *env, struct instrumentation_capabilities *capabilities, const char *role)
 {
-    static const char *const trace_entry[] = {"p101_env_trace"};
-    static const char *const trace_exit[]  = {"p101_env_trace_exit", "p101_env_trace_scope_cleanup"};
-    static const char *const fault[]       = {"p101_env_check_fault", "p101_env_check_fault_action"};
-    static const char *const fd[]          = {"p101_env_track_open", "p101_env_track_close", "p101_env_track_fork", "p101_env_track_spawn", "p101_env_track_exec", "p101_env_track_exec_failure"};
-    static const char *const allocation[]  = {"p101_env_track_alloc", "p101_env_track_free", "p101_env_track_realloc"};
-    static const char *const resource[]    = {"p101_env_track_resource", "p101_env_track_pointer_resource", "p101_env_track_integer_resource"};
-
-    const struct
-    {
-        const char *const *names;
-        size_t             count;
-        bool              *present;
-    } groups[] = {
-        {trace_entry, sizeof(trace_entry) / sizeof(trace_entry[0]), &capabilities->trace_entry},
-        {trace_exit,  sizeof(trace_exit) / sizeof(trace_exit[0]),   &capabilities->trace_exit },
-        {fault,       sizeof(fault) / sizeof(fault[0]),             &capabilities->fault      },
-        {fd,          sizeof(fd) / sizeof(fd[0]),                   &capabilities->fd         },
-        {allocation,  sizeof(allocation) / sizeof(allocation[0]),   &capabilities->allocation },
-        {resource,    sizeof(resource) / sizeof(resource[0]),       &capabilities->resource   },
-    };
-
     P101_TRACE_SCOPE(env);
-    for(size_t group = 0U; group < sizeof(groups) / sizeof(groups[0]); group++)
+    if(p101_strcmp(env, role, "CALLEE_SEMANTIC_ROLE:p101:instrumentation:trace-entry") == 0)
     {
-        for(size_t index = 0U; index < groups[group].count; index++)
-        {
-            if(p101_strcmp(env, name, groups[group].names[index]) == 0)
-            {
-                *groups[group].present = true;
-            }
-        }
+        capabilities->trace_entry = true;
+    }
+    else if(p101_strcmp(env, role, "CALLEE_SEMANTIC_ROLE:p101:instrumentation:trace-exit") == 0)
+    {
+        capabilities->trace_exit = true;
+    }
+    else if(p101_strcmp(env, role, "CALLEE_SEMANTIC_ROLE:p101:instrumentation:fault") == 0)
+    {
+        capabilities->fault = true;
+    }
+    else if(p101_strcmp(env, role, "CALLEE_SEMANTIC_ROLE:p101:instrumentation:fd") == 0)
+    {
+        capabilities->fd = true;
+    }
+    else if(p101_strcmp(env, role, "CALLEE_SEMANTIC_ROLE:p101:instrumentation:allocation") == 0)
+    {
+        capabilities->allocation = true;
+    }
+    else if(p101_strcmp(env, role, "CALLEE_SEMANTIC_ROLE:p101:instrumentation:resource") == 0)
+    {
+        capabilities->resource = true;
     }
 }
 
-static size_t find_function_fact(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *caller, const char *name)
+static size_t find_function_fact(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *call)
 {
     size_t found;
 
@@ -60,13 +53,35 @@ static size_t find_function_fact(const struct p101_env *env, const struct p101_w
         const struct p101_wrapper_fact *candidate;
 
         candidate = &model->facts[index];
-        if(candidate->kind == P101_C_ANALYSIS_FUNCTION && candidate->is_definition && p101_strcmp(env, candidate->path, caller->path) == 0 && p101_strcmp(env, candidate->name, name) == 0)
+        if(candidate->kind == P101_C_ANALYSIS_FUNCTION && candidate->is_definition && call->usr[0] != '\0' && p101_strcmp(env, candidate->usr, call->usr) == 0)
         {
             found = index;
             break;
         }
     }
     return found;
+}
+
+static bool function_is_inventory_wrapper(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *function)
+{
+    bool wrapper;
+
+    P101_TRACE_SCOPE(env);
+    wrapper = false;
+    if(function->kind != P101_C_ANALYSIS_FUNCTION || !function->is_definition || function->usr[0] == '\0')
+    {
+        goto done;
+    }
+    for(size_t inventory_index = 0U; inventory_index < model->inventory_count && !wrapper; inventory_index++)
+    {
+        if(model->inventory[inventory_index].wrapper_usr[0] != '\0' && p101_strcmp(env, model->inventory[inventory_index].wrapper_usr, function->usr) == 0)
+        {
+            wrapper = true;
+        }
+    }
+
+done:
+    return wrapper;
 }
 
 static bool merge_capabilities(struct instrumentation_capabilities *destination, const struct instrumentation_capabilities *source)
@@ -122,26 +137,27 @@ static size_t find_calling_function(const struct p101_env *env, const struct p10
         {
             continue;
         }
-        if(call->caller[0] != '\0' && p101_strcmp(env, candidate->name, call->caller) == 0)
+        if(call->caller_usr[0] != '\0' && p101_strcmp(env, candidate->usr, call->caller_usr) == 0)
         {
             nearest = index;
             break;
         }
         /*
          * Detailed preprocessing records are not children of the function
-         * cursor, so libclang cannot supply their lexical caller.  A trace
-         * macro still has the invocation's source line; associate it with the
-         * nearest preceding definition in that file.
+         * cursor, so libclang cannot supply their semantic caller. Associate
+         * a macro expansion only when its expansion offset is inside the
+         * resolved function definition's source extent.
          */
-        if(call->caller[0] == '\0' && candidate->line <= call->line && (nearest == model->fact_count || model->facts[nearest].line < candidate->line))
+        if(call->caller_usr[0] == '\0' && call->start >= candidate->start && call->start < candidate->end)
         {
             nearest = index;
+            break;
         }
     }
     return nearest;
 }
 
-static size_t find_function_at_source_line(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *fact)
+static size_t find_function_at_source_location(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *fact)
 {
     size_t nearest;
 
@@ -152,9 +168,10 @@ static size_t find_function_at_source_line(const struct p101_env *env, const str
         const struct p101_wrapper_fact *candidate;
 
         candidate = &model->facts[index];
-        if(candidate->kind == P101_C_ANALYSIS_FUNCTION && candidate->is_definition && p101_strcmp(env, candidate->path, fact->path) == 0 && candidate->line <= fact->line && (nearest == model->fact_count || model->facts[nearest].line < candidate->line))
+        if(candidate->kind == P101_C_ANALYSIS_FUNCTION && candidate->is_definition && p101_strcmp(env, candidate->path, fact->path) == 0 && fact->start >= candidate->start && fact->start < candidate->end)
         {
             nearest = index;
+            break;
         }
     }
     return nearest;
@@ -175,9 +192,9 @@ static void collect_capabilities(const struct p101_env *env, const struct p101_w
         {
             continue;
         }
-        if(fact->kind == P101_C_ANALYSIS_NOTE && p101_strcmp(env, fact->name, "TRACE_USE") == 0)
+        if(fact->kind == P101_C_ANALYSIS_NOTE && p101_strcmp(env, fact->name, "TYPE_SEMANTIC_ROLE:p101:trace-scope") == 0)
         {
-            function = find_function_at_source_line(env, model, fact);
+            function = find_function_at_source_location(env, model, fact);
         }
         else
         {
@@ -187,14 +204,14 @@ static void collect_capabilities(const struct p101_env *env, const struct p101_w
         {
             continue;
         }
-        if(fact->kind == P101_C_ANALYSIS_NOTE && p101_strcmp(env, fact->name, "TRACE_USE") == 0)
+        if(fact->kind == P101_C_ANALYSIS_NOTE && p101_strcmp(env, fact->name, "TYPE_SEMANTIC_ROLE:p101:trace-scope") == 0)
         {
             capabilities[function].trace_entry = true;
             capabilities[function].trace_exit  = true;
         }
-        else if(fact->kind == P101_C_ANALYSIS_CALL)
+        else if(fact->kind == P101_C_ANALYSIS_NOTE)
         {
-            add_call_capability(env, &capabilities[function], fact->name);
+            add_role_capability(env, &capabilities[function], fact->name);
         }
     }
 
@@ -217,7 +234,7 @@ static void collect_capabilities(const struct p101_env *env, const struct p101_w
             {
                 continue;
             }
-            callee = find_function_fact(env, model, &model->facts[caller], call->name);
+            callee = find_function_fact(env, model, call);
             if(callee != model->fact_count && merge_capabilities(&capabilities[caller], &capabilities[callee]))
             {
                 changed = true;
@@ -407,7 +424,7 @@ static bool write_instrumentation(const struct p101_env *env, struct p101_error 
         const struct p101_wrapper_fact *fact;
 
         fact = &model->facts[index];
-        if(fact->kind != P101_C_ANALYSIS_FUNCTION || !fact->is_definition || p101_strncmp(env, fact->name, "p101_", sizeof("p101_") - 1U) != 0)
+        if(!function_is_inventory_wrapper(env, model, fact))
         {
             continue;
         }
@@ -420,6 +437,8 @@ static bool write_instrumentation(const struct p101_env *env, struct p101_error 
         p101_wrapper_output_json_string(env, err, stream, fact->path);
         p101_fputs(env, err, ",\"function\":", stream);
         p101_wrapper_output_json_string(env, err, stream, fact->name);
+        p101_fputs(env, err, ",\"usr\":", stream);
+        p101_wrapper_output_json_string(env, err, stream, fact->usr);
         p101_fprintf(env,
                      err,
                      stream,

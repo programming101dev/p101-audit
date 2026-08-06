@@ -11,6 +11,7 @@ enum
 
 static void deduplicate_facts(const struct p101_env *env, struct p101_wrapper_model *model);
 static void assign_macro_callers(const struct p101_env *env, struct p101_wrapper_model *model);
+static bool identity_fits(const struct p101_env *env, const char *identity, size_t size);
 
 void p101_wrapper_model_init(struct p101_wrapper_model *model)
 {
@@ -42,6 +43,11 @@ static void copy_field(const struct p101_env *env, char *destination, size_t siz
         p101_memcpy(env, destination, source, length);
         destination[length] = '\0';
     }
+}
+
+static bool identity_fits(const struct p101_env *env, const char *identity, size_t size)
+{
+    return (identity == NULL || p101_strlen(env, identity) < size) != 0;
 }
 
 static bool grow_facts(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model)
@@ -79,6 +85,11 @@ bool p101_wrapper_analysis_observer(const struct p101_env *env, struct p101_erro
     {
         model->parse_failures++;
     }
+    if(!identity_fits(env, record->usr, sizeof(model->facts[0].usr)) || !identity_fits(env, record->caller_usr, sizeof(model->facts[0].caller_usr)))
+    {
+        P101_ERROR_RAISE_USER(err, "A resolved declaration identity is too long for the wrapper-audit model.", 1);
+        goto done;
+    }
     if(model->fact_count == model->fact_capacity && !grow_facts(env, err, model))
     {
         goto done;
@@ -103,6 +114,8 @@ bool p101_wrapper_analysis_observer(const struct p101_env *env, struct p101_erro
     copy_field(env, fact->name, sizeof(fact->name), record->name);
     copy_field(env, fact->type, sizeof(fact->type), record->type);
     copy_field(env, fact->caller, sizeof(fact->caller), record->caller);
+    copy_field(env, fact->usr, sizeof(fact->usr), record->usr);
+    copy_field(env, fact->caller_usr, sizeof(fact->caller_usr), record->caller_usr);
     copy_field(env, fact->replacement, sizeof(fact->replacement), record->replacement);
     keep_going = true;
 
@@ -166,9 +179,10 @@ static void assign_macro_callers(const struct p101_env *env, struct p101_wrapper
             const struct p101_wrapper_fact *call;
 
             call = &model->facts[function_index];
-            if(call->kind == P101_C_ANALYSIS_CALL && call->line == macro->line && call->caller[0] != '\0' && p101_strcmp(env, call->path, macro->path) == 0)
+            if(call->kind == P101_C_ANALYSIS_CALL && call->caller_usr[0] != '\0' && call->start <= macro->start && call->end >= macro->end && p101_strcmp(env, call->path, macro->path) == 0)
             {
                 copy_field(env, macro->caller, sizeof(macro->caller), call->caller);
+                copy_field(env, macro->caller_usr, sizeof(macro->caller_usr), call->caller_usr);
                 break;
             }
         }
@@ -192,6 +206,7 @@ static void assign_macro_callers(const struct p101_env *env, struct p101_wrapper
             if(span < narrowest_span)
             {
                 copy_field(env, macro->caller, sizeof(macro->caller), function->name);
+                copy_field(env, macro->caller_usr, sizeof(macro->caller_usr), function->usr);
                 narrowest_span = span;
             }
         }
@@ -269,6 +284,14 @@ static int compare_facts(const void *left, const void *right)
     if(result == 0)
     {
         result = compare_text(a->caller, b->caller);
+    }
+    if(result == 0)
+    {
+        result = compare_text(a->usr, b->usr);
+    }
+    if(result == 0)
+    {
+        result = compare_text(a->caller_usr, b->caller_usr);
     }
     if(result == 0)
     {

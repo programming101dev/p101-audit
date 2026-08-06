@@ -49,78 +49,109 @@ done:
     return grown;
 }
 
-static const char *canonical_callee(const struct p101_env *env, const char *name)
+static const char *canonical_native_usr(const struct p101_env *env, const char *usr)
 {
     static const struct
     {
         const char *lowered;
-        const char *source;
+        const char *canonical;
     } mappings[] = {
-        {"__builtin___fprintf_chk",   "fprintf"  },
-        {"__builtin___memcpy_chk",    "memcpy"   },
-        {"__builtin___memmove_chk",   "memmove"  },
-        {"__builtin___memset_chk",    "memset"   },
-        {"__builtin___printf_chk",    "printf"   },
-        {"__builtin___snprintf_chk",  "snprintf" },
-        {"__builtin___strcpy_chk",    "strcpy"   },
-        {"__builtin___vsnprintf_chk", "vsnprintf"},
-        {"__builtin_memcpy",          "memcpy"   },
-        {"__builtin_memmove",         "memmove"  },
-        {"__builtin_memset",          "memset"   },
-        {"__builtin_va_copy",         "va_copy"  },
-        {"__builtin_va_end",          "va_end"   },
-        {"__builtin_va_start",        "va_start" },
+        {"c:@F@__builtin___fprintf_chk",   "c:@F@fprintf"  },
+        {"c:@F@__builtin___memcpy_chk",    "c:@F@memcpy"   },
+        {"c:@F@__builtin___memmove_chk",   "c:@F@memmove"  },
+        {"c:@F@__builtin___memset_chk",    "c:@F@memset"   },
+        {"c:@F@__builtin___printf_chk",    "c:@F@printf"   },
+        {"c:@F@__builtin___snprintf_chk",  "c:@F@snprintf" },
+        {"c:@F@__builtin___strcpy_chk",    "c:@F@strcpy"   },
+        {"c:@F@__builtin___vsnprintf_chk", "c:@F@vsnprintf"},
+        {"c:@F@__builtin_memcpy",          "c:@F@memcpy"   },
+        {"c:@F@__builtin_memmove",         "c:@F@memmove"  },
+        {"c:@F@__builtin_memset",          "c:@F@memset"   },
+        {"c:@F@__builtin_va_copy",         "c:@F@va_copy"  },
+        {"c:@F@__builtin_va_end",          "c:@F@va_end"   },
+        {"c:@F@__builtin_va_start",        "c:@F@va_start" },
     };
 
     size_t      index;
     const char *canonical;
 
     P101_TRACE_SCOPE(env);
-    canonical = name;
+    canonical = usr;
     for(index = 0U; index < sizeof(mappings) / sizeof(mappings[0]); index++)
     {
-        if(p101_strcmp(env, name, mappings[index].lowered) == 0)
+        if(p101_strcmp(env, usr, mappings[index].lowered) == 0)
         {
-            canonical = mappings[index].source;
+            canonical = mappings[index].canonical;
             break;
         }
     }
     return canonical;
 }
 
-static const char *find_wrapper(const struct p101_env *env, const struct p101_wrapper_model *model, const char *name)
+static const struct p101_wrapper_inventory *find_wrapper(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *fact)
 {
-    size_t      index;
-    const char *wrapper;
+    const char                          *callee_usr;
+    const struct p101_wrapper_inventory *wrapper;
 
     P101_TRACE_SCOPE(env);
-    wrapper = NULL;
-    for(index = 0U; index < model->inventory_count; index++)
+    wrapper    = NULL;
+    callee_usr = canonical_native_usr(env, fact->usr);
+    for(size_t index = 0U; index < model->inventory_count; index++)
     {
-        if(p101_strcmp(env, model->inventory[index].original, name) == 0)
+        const struct p101_wrapper_inventory *candidate;
+
+        candidate = &model->inventory[index];
+        if((callee_usr != NULL && callee_usr[0] != '\0' && p101_strcmp(env, candidate->original_usr, callee_usr) == 0) || (fact->kind == P101_C_ANALYSIS_MACRO && candidate->original[0] != '\0' && p101_strcmp(env, candidate->original, fact->name) == 0))
         {
-            wrapper = model->inventory[index].wrapper;
+            wrapper = candidate;
             break;
         }
     }
     return wrapper;
 }
 
-static bool is_wrapper_implementation(const struct p101_env *env, const char *caller, const char *name, const char *wrapper)
+static bool call_is_inventory_wrapper(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *call)
+{
+    bool known;
+
+    P101_TRACE_SCOPE(env);
+    known = false;
+    if(call->kind != P101_C_ANALYSIS_CALL || call->usr[0] == '\0')
+    {
+        goto done;
+    }
+    for(size_t inventory_index = 0U; inventory_index < model->inventory_count && !known; inventory_index++)
+    {
+        if(model->inventory[inventory_index].wrapper_usr[0] != '\0' && p101_strcmp(env, model->inventory[inventory_index].wrapper_usr, call->usr) == 0)
+        {
+            known = true;
+        }
+    }
+
+done:
+    return known;
+}
+
+static bool caller_is_declared_wrapper(const struct p101_env *env, const struct p101_wrapper_fact *call, const struct p101_wrapper_inventory *wrapper)
+{
+    return (wrapper != NULL && wrapper->wrapper_usr[0] != '\0' && call->caller_usr[0] != '\0' && p101_strcmp(env, wrapper->wrapper_usr, call->caller_usr) == 0) != 0;
+}
+
+static bool is_wrapper_implementation(const struct p101_env *env, const struct p101_wrapper_fact *call, const struct p101_wrapper_inventory *wrapper)
 {
     static const struct
     {
-        const char *lowered;
-        const char *wrapper;
+        const char *lowered_usr;
+        const char *wrapper_usr;
     } aliases[] = {
-        {"fgetc",  "p101_getc"    },
-        {"fgetc",  "p101_getchar" },
-        {"fgetwc", "p101_getwc"   },
-        {"fgetwc", "p101_getwchar"},
-        {"fputc",  "p101_putc"    },
-        {"fputc",  "p101_putchar" },
-        {"fputwc", "p101_putwc"   },
-        {"fputwc", "p101_putwchar"},
+        {"c:@F@fgetc",  "c:@F@p101_getc"    },
+        {"c:@F@fgetc",  "c:@F@p101_getchar" },
+        {"c:@F@fgetwc", "c:@F@p101_getwc"   },
+        {"c:@F@fgetwc", "c:@F@p101_getwchar"},
+        {"c:@F@fputc",  "c:@F@p101_putc"    },
+        {"c:@F@fputc",  "c:@F@p101_putchar" },
+        {"c:@F@fputwc", "c:@F@p101_putwc"   },
+        {"c:@F@fputwc", "c:@F@p101_putwchar"},
     };
 
     size_t index;
@@ -128,7 +159,7 @@ static bool is_wrapper_implementation(const struct p101_env *env, const char *ca
 
     P101_TRACE_SCOPE(env);
     implementation = false;
-    if(wrapper != NULL && p101_strcmp(env, caller, wrapper) == 0)
+    if(caller_is_declared_wrapper(env, call, wrapper))
     {
         implementation = true;
         goto done;
@@ -141,7 +172,7 @@ static bool is_wrapper_implementation(const struct p101_env *env, const char *ca
      */
     for(index = 0U; index < sizeof(aliases) / sizeof(aliases[0]); index++)
     {
-        if(p101_strcmp(env, name, aliases[index].lowered) == 0 && p101_strcmp(env, caller, aliases[index].wrapper) == 0)
+        if(p101_strcmp(env, call->usr, aliases[index].lowered_usr) == 0 && p101_strcmp(env, call->caller_usr, aliases[index].wrapper_usr) == 0)
         {
             implementation = true;
             break;
@@ -152,7 +183,7 @@ done:
     return implementation;
 }
 
-static bool is_local(const struct p101_env *env, const struct p101_wrapper_model *model, const char *name)
+static bool is_local(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *call)
 {
     size_t index;
     bool   local;
@@ -161,7 +192,7 @@ static bool is_local(const struct p101_env *env, const struct p101_wrapper_model
     local = false;
     for(index = 0U; index < model->fact_count; index++)
     {
-        if(model->facts[index].kind == P101_C_ANALYSIS_FUNCTION && model->facts[index].is_definition && p101_strcmp(env, model->facts[index].name, name) == 0)
+        if(model->facts[index].kind == P101_C_ANALYSIS_FUNCTION && model->facts[index].is_definition && call->usr[0] != '\0' && p101_strcmp(env, model->facts[index].usr, call->usr) == 0)
         {
             local = true;
             break;
@@ -180,8 +211,8 @@ static bool path_matches(const struct p101_env *env, const char *pattern, const 
     matches   = false;
     for(;;)
     {
-        /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: match failure and no-match are both a false probe. */
-        if(p101_fnmatch(env, NULL, pattern, candidate, 0) == 0)
+        /* P101_ERROR_OPTIONAL rationale: match failure and no-match are both a false probe. */
+        if(p101_fnmatch(env, P101_ERROR_OPTIONAL, pattern, candidate, 0) == 0)
         {
             matches = true;
             break;
@@ -196,16 +227,49 @@ static bool path_matches(const struct p101_env *env, const char *pattern, const 
     return matches;
 }
 
-static bool is_allowed(const struct p101_env *env, struct p101_wrapper_arguments *arguments, const struct p101_wrapper_fact *fact, const char *name)
+static const char *fact_callee_identity(const struct p101_env *env, const struct p101_wrapper_fact *fact, const struct p101_wrapper_inventory *wrapper, char *macro_identity, size_t macro_identity_size)
 {
-    size_t index;
-    bool   allowed;
+    const char *identity;
+    const char *type_marker;
 
     P101_TRACE_SCOPE(env);
-    allowed = false;
-    for(index = 0U; index < arguments->allowed_count; index++)
+    identity    = canonical_native_usr(env, fact->usr);
+    type_marker = NULL;
+    if(identity != NULL)
     {
-        if(p101_strcmp(env, arguments->allowed[index], name) == 0)
+        type_marker = p101_strstr(env, identity, "@T@");
+    }
+    if(type_marker != NULL)
+    {
+        p101_snprintf(env, P101_ERROR_OPTIONAL, macro_identity, macro_identity_size, "c:%s", type_marker);
+        identity = macro_identity;
+    }
+    if(fact->kind == P101_C_ANALYSIS_MACRO && wrapper != NULL && wrapper->original_usr[0] != '\0')
+    {
+        identity = wrapper->original_usr;
+    }
+    if((identity == NULL || identity[0] == '\0') && fact->kind == P101_C_ANALYSIS_MACRO)
+    {
+        p101_snprintf(env, P101_ERROR_OPTIONAL, macro_identity, macro_identity_size, "macro:%s", fact->name);
+        identity = macro_identity;
+    }
+    return identity;
+}
+
+static bool is_allowed(const struct p101_env *env, struct p101_wrapper_arguments *arguments, const struct p101_wrapper_fact *fact, const struct p101_wrapper_inventory *wrapper)
+{
+    char        macro_identity[P101_WRAPPER_NAME_SIZE];
+    const char *callee_usr;
+    size_t      index;
+    bool        allowed;
+
+    P101_TRACE_SCOPE(env);
+    macro_identity[0] = '\0';
+    callee_usr        = fact_callee_identity(env, fact, wrapper, macro_identity, sizeof(macro_identity));
+    allowed           = false;
+    for(index = 0U; callee_usr != NULL && index < arguments->allowed_usr_count; index++)
+    {
+        if(p101_strcmp(env, arguments->allowed_usrs[index], callee_usr) == 0)
         {
             allowed = true;
             break;
@@ -213,11 +277,37 @@ static bool is_allowed(const struct p101_env *env, struct p101_wrapper_arguments
     }
     for(index = 0U; !allowed && index < arguments->allow_rule_count; index++)
     {
-        /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: match failure and no-match both reject the allow rule. */
-        if(path_matches(env, arguments->allow_rules[index].path, fact->path) && p101_fnmatch(env, NULL, arguments->allow_rules[index].function, fact->caller, 0) == 0 && p101_fnmatch(env, NULL, arguments->allow_rules[index].callee, name, 0) == 0)
+        if(callee_usr != NULL && path_matches(env, arguments->allow_rules[index].path, fact->path) && (arguments->allow_rules[index].caller_usr[0] == '\0' || p101_strcmp(env, arguments->allow_rules[index].caller_usr, fact->caller_usr) == 0) &&
+           p101_strcmp(env, arguments->allow_rules[index].callee_usr, callee_usr) == 0)
         {
             arguments->allow_rules[index].uses++;
             allowed = true;
+        }
+    }
+    return allowed;
+}
+
+static bool is_allowed_macro_lowering(const struct p101_env *env, struct p101_wrapper_arguments *arguments, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *call)
+{
+    bool allowed;
+
+    P101_TRACE_SCOPE(env);
+    allowed = false;
+    for(size_t index = 0U; index < model->fact_count; index++)
+    {
+        const struct p101_wrapper_fact      *macro;
+        const struct p101_wrapper_inventory *wrapper;
+
+        macro = &model->facts[index];
+        if(macro->kind != P101_C_ANALYSIS_MACRO || macro->is_definition || p101_strcmp(env, macro->path, call->path) != 0 || p101_strcmp(env, macro->caller_usr, call->caller_usr) != 0 || call->start > macro->start || call->end < macro->end)
+        {
+            continue;
+        }
+        wrapper = find_wrapper(env, model, macro);
+        if(wrapper != NULL && is_allowed(env, arguments, macro, wrapper))
+        {
+            allowed = true;
+            break;
         }
     }
     return allowed;
@@ -302,11 +392,11 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
         }
         else if(fact->kind == P101_C_ANALYSIS_CALL || (fact->kind == P101_C_ANALYSIS_MACRO && !fact->is_definition))
         {
-            const char *name;
-            const char *wrapper;
+            const char                          *name;
+            const struct p101_wrapper_inventory *wrapper;
 
-            name    = canonical_callee(env, fact->name);
-            wrapper = find_wrapper(env, model, name);
+            name    = fact->name;
+            wrapper = find_wrapper(env, model, fact);
             /*
              * Function-like libc APIs are macros on some platforms. Treat a
              * macro invocation as a boundary operation only when the wrapper
@@ -317,8 +407,7 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
             {
                 continue;
             }
-            if(name[0] == '\0' || p101_strncmp(env, name, "p101_", sizeof("p101_") - 1U) == 0 || p101_strncmp(env, name, "P101_", sizeof("P101_") - 1U) == 0 || p101_strncmp(env, name, "__", sizeof("__") - 1U) == 0 || is_local(env, model, name) ||
-               is_allowed(env, arguments, fact, name))
+            if(name[0] == '\0' || call_is_inventory_wrapper(env, model, fact) || is_local(env, model, fact) || is_allowed(env, arguments, fact, wrapper) || is_allowed_macro_lowering(env, arguments, model, fact))
             {
                 continue;
             }
@@ -326,7 +415,7 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
             {
                 wrapper = NULL;
             }
-            if(is_wrapper_implementation(env, fact->caller, name, wrapper))
+            if(is_wrapper_implementation(env, fact, wrapper))
             {
                 continue;
             }
@@ -343,7 +432,7 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
                 {
                     finding_kind = P101_WRAPPER_MISSED;
                 }
-                replacement = wrapper == NULL ? "" : wrapper;
+                replacement = wrapper == NULL ? "" : wrapper->wrapper;
                 if(!add_finding(env, err, model, finding_kind, fact, name, replacement))
                 {
                     judged = false;
@@ -357,7 +446,7 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
         {
             char message[P101_WRAPPER_PATH_SIZE];
 
-            p101_snprintf(env, err, message, sizeof(message), "Wrapper boundary rule did not match any call: %s:%s:%s", arguments->allow_rules[index].path, arguments->allow_rules[index].function, arguments->allow_rules[index].callee);
+            p101_snprintf(env, err, message, sizeof(message), "Wrapper boundary rule did not match any call: %s<TAB>%s<TAB>%s", arguments->allow_rules[index].path, arguments->allow_rules[index].caller_usr, arguments->allow_rules[index].callee_usr);
             if(p101_error_has_no_error(err))
             {
                 P101_ERROR_RAISE_USER(err, message, 1);

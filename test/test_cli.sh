@@ -4,6 +4,14 @@ set -euo pipefail
 audit=$1
 facts=$2
 work=$(mktemp -d "${TMPDIR:-/tmp}/p101-wrapper-audit-test.XXXXXX")
+semantic_allows=(
+    --allow-usr 'c:@F@malloc'
+    --allow-usr 'c:@F@free'
+    --allow-usr 'c:@F@p101_first'
+    --allow-usr 'c:@F@p101_second'
+    --allow-usr 'c:@F@p101_error_has_error'
+    --allow-usr 'c:@F@p101_error_optional'
+)
 trap 'rm -rf "$work"' EXIT
 
 "$audit" --help >/dev/null 2>&1
@@ -13,7 +21,14 @@ mkdir -p "$work/src/alpha"
 cat >"$work/src/alpha/local.h" <<'HEADER'
 #ifndef LOCAL_H
 #define LOCAL_H
-#define P101_TRACE_SCOPE(value) ((void)(value))
+struct p101_env;
+typedef struct p101_trace_scope
+{
+    const struct p101_env *env;
+} p101_trace_scope __attribute__((annotate("p101:trace-scope")));
+#define P101_TRACE_SCOPE(value)              \
+    p101_trace_scope trace_scope = {(value)}; \
+    (void)trace_scope
 typedef enum
 {
     P101_SAMPLE_OK,
@@ -28,13 +43,25 @@ struct p101_env;
 struct p101_error;
 int p101_first(const struct p101_env *, struct p101_error *);
 int p101_second(const struct p101_env *, struct p101_error *);
-int p101_error_has_error(const struct p101_error *);
+int p101_error_has_error(const struct p101_error *) __attribute__((annotate("p101:error-state-query")));
+struct p101_error *p101_error_optional(void) __attribute__((annotate("p101:optional-error")));
+#define P101_ERROR_OPTIONAL p101_error_optional()
 int external_boundary(void);
 
 static int p101_traced(const struct p101_env *env)
 {
     P101_TRACE_SCOPE(env);
     return 0;
+}
+
+void *p101_malloc(const struct p101_env *env, struct p101_error *err, size_t size)
+{
+    void *memory;
+
+    P101_TRACE_SCOPE(env);
+    (void)err;
+    memory = malloc(size);
+    return memory;
 }
 
 static int local(void)
@@ -45,13 +72,25 @@ static int local(void)
 
 int checked(const struct p101_env *env, struct p101_error *err)
 {
+    int result = 0;
+    int has_error;
+
     p101_first(env, err);
-    if(p101_error_has_error(err))
+    has_error = p101_error_has_error(err);
+    if(has_error)
     {
-        return -1;
+        result = -1;
+        goto done;
     }
     p101_second(env, err);
-    return 0;
+    has_error = p101_error_has_error(err);
+    if(has_error)
+    {
+        result = -1;
+    }
+
+done:
+    return result;
 }
 
 int chained(const struct p101_env *env, struct p101_error *err)
@@ -63,8 +102,8 @@ int chained(const struct p101_env *env, struct p101_error *err)
 
 int optional(const struct p101_env *env)
 {
-    /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: absence is the result. */
-    return p101_first(env, 0);
+    /* P101_ERROR_OPTIONAL rationale: absence is the result. */
+    return p101_first(env, P101_ERROR_OPTIONAL);
 }
 
 int main(void)
@@ -92,22 +131,22 @@ set -e
 grep -q '"schema":"p101-wrapper-audit-findings-v2"' "$work/audit.json"
 
 set +e
-"$audit" --allow malloc --allow free "$work" >"$work/external.txt" 2>"$work/external.err"
+"$audit" "${semantic_allows[@]}" "$work" >"$work/external.txt" 2>"$work/external.err"
 status=$?
 set -e
 [ "$status" -eq 0 ]
 grep -q 'external_calls: 1' "$work/external.txt"
 
 set +e
-"$audit" --strict-external --allow malloc --allow free "$work" >"$work/strict.txt" 2>"$work/strict.err"
+"$audit" --strict-external "${semantic_allows[@]}" "$work" >"$work/strict.txt" 2>"$work/strict.err"
 status=$?
 set -e
 [ "$status" -eq 1 ]
 grep -q 'external-call: external_boundary' "$work/strict.txt"
 ! grep -q 'external-call: P101_TRACE_SCOPE' "$work/strict.txt"
 
-printf '*:local:external_boundary\n' >"$work/allow.rules"
-"$audit" --strict-external --allow malloc --allow free \
+printf '*\t\tc:@F@external_boundary\n' >"$work/allow.rules"
+"$audit" --strict-external "${semantic_allows[@]}" \
     --allow-file "$work/allow.rules" "$work" >/dev/null
 
 cat >"$work/builtin-format.c" <<'SOURCE'
@@ -129,10 +168,10 @@ static int format_text(char *buffer, size_t size, const char *format, ...)
 }
 SOURCE
 cat >"$work/builtin-format.rules" <<'RULES'
-*:format_text:va_start
-*:format_text:va_copy
-*:format_text:vsnprintf
-*:format_text:va_end
+*		c:@F@va_start
+*		c:@F@va_copy
+*		c:@F@vsnprintf
+*		c:@F@va_end
 RULES
 "$audit" --strict-external --allow-file "$work/builtin-format.rules" \
     "$work/builtin-format.c" >/dev/null
@@ -154,7 +193,7 @@ status=$?
 set -e
 [ "$status" -eq 1 ]
 grep -q 'malloc -> p101_malloc' "$work/macro-wrapper.out"
-printf '*:*:malloc\n' >"$work/macro-wrapper.rules"
+printf '*\t\tc:@F@malloc\n' >"$work/macro-wrapper.rules"
 "$audit" --allow-file "$work/macro-wrapper.rules" "$work/macro-wrapper.c" >/dev/null
 rm -f "$work/macro-wrapper.c" "$work/macro-wrapper.rules"
 
@@ -169,9 +208,9 @@ SOURCE
 "$audit" "$work/macro-wrapper-implementation.c" >/dev/null
 rm -f "$work/macro-wrapper-implementation.c"
 
-printf '*:missing:external_boundary\n' >"$work/stale.rules"
+printf '*\tc:@F@missing\tc:@F@external_boundary\n' >"$work/stale.rules"
 set +e
-"$audit" --allow malloc --allow free --allow-file "$work/stale.rules" \
+"$audit" "${semantic_allows[@]}" --allow-file "$work/stale.rules" \
     "$work" >"$work/stale.out" 2>"$work/stale.err"
 status=$?
 set -e
@@ -180,8 +219,8 @@ grep -q 'did not match' "$work/stale.err"
 
 "$facts" "$work" >"$work/facts.tsv"
 grep -q $'\talpha/main\t' "$work/facts.tsv"
-grep -q $'\tENUM\t.*\tp101_sample_result$' "$work/facts.tsv"
-grep -q $'\tENUMERATOR\t.*\tP101_SAMPLE_REFUSED\tp101_sample_result$' "$work/facts.tsv"
+awk -F '\t' '$3 == "ENUM" && $8 == "p101_sample_result" { found = 1 } END { exit !found }' "$work/facts.tsv"
+awk -F '\t' '$3 == "ENUMERATOR" && $8 == "P101_SAMPLE_REFUSED" && $9 == "p101_sample_result" { found = 1 } END { exit !found }' "$work/facts.tsv"
 grep -q $'\tERROR_OPTIONAL' "$work/facts.tsv"
 [ "$(grep -c $'\tERROR_UNCHECKED_CHAIN' "$work/facts.tsv")" -eq 1 ]
 awk -F '\t' '$3 == "INCLUDE" { found = 1; if(NF != 9) exit 1 } END { exit !found }' "$work/facts.tsv"
@@ -191,13 +230,13 @@ awk -F '\t' '$3 == "INCLUDE" { found = 1; if(NF != 9) exit 1 } END { exit !found
     --input-manifest "$work/manifest.json" \
     --instrumentation-output "$work/instrumentation.json" \
     --mutation-candidates-output "$work/mutations.json" \
-    --allow malloc --allow free "$work" >/dev/null
+    "${semantic_allows[@]}" "$work" >/dev/null
 grep -q '^P101FACT' "$work/snapshot.tsv"
 grep -q '"schema":"p101-wrapper-input-manifest-v3"' "$work/manifest.json"
 grep -Fq '"translation_units":[' "$work/manifest.json"
 grep -q '"inventory_entries":' "$work/manifest.json"
 grep -q '"schema":"p101-instrumentation-coverage-v1"' "$work/instrumentation.json"
-grep -q '"function":"p101_traced".*"public":false.*"has_env":true.*"trace_entry":true.*"trace_exit":true' "$work/instrumentation.json"
+grep -q '"function":"p101_malloc".*"public":true.*"has_env":true.*"trace_entry":true.*"trace_exit":true' "$work/instrumentation.json"
 grep -q '"schema":"p101-mutation-candidates-v2"' "$work/mutations.json"
 
 set +e

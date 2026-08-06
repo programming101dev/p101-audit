@@ -18,7 +18,7 @@ void p101_wrapper_usage(const struct p101_env *env, struct p101_error *err, cons
     p101_fprintf(env, err, stderr, "Usage: %s [options] [path...]\n", program_name);
     if(facts_only)
     {
-        p101_fputs(env, err, "Emit P101FACT v4 records using lib_c_facts/libclang.\n", stderr);
+        p101_fputs(env, err, "Emit P101FACT v6 records using lib_c_facts/libclang.\n", stderr);
     }
     else
     {
@@ -32,11 +32,11 @@ void p101_wrapper_usage(const struct p101_env *env, struct p101_error *err, cons
     {
         p101_fputs(env, err, "  -j, --json              emit JSON findings\n", stderr);
         p101_fputs(env, err, "  -e, --strict-external   fail for external and indirect calls\n", stderr);
-        p101_fputs(env, err, "  -a, --allow NAME        allow an external callee\n", stderr);
-        p101_fputs(env, err, "  --allow-file FILE       read path:function:callee boundary rules\n", stderr);
+        p101_fputs(env, err, "  --allow-usr USR         allow an exact external declaration identity\n", stderr);
+        p101_fputs(env, err, "  --allow-file FILE       read TSV path/caller-USR/callee-USR rules\n", stderr);
         p101_fputs(env, err, "  --header-root DIR       add a wrapper inventory root\n", stderr);
         p101_fputs(env, err, "  --show-inventory[-json] print the wrapper inventory\n", stderr);
-        p101_fputs(env, err, "  --emit-module-facts     emit P101FACT v4 records\n", stderr);
+        p101_fputs(env, err, "  --emit-module-facts     emit P101FACT v6 records\n", stderr);
         p101_fputs(env, err, "  --facts-output FILE     write a reusable fact snapshot\n", stderr);
         p101_fputs(env, err, "  --input-manifest FILE   write an admitted-input receipt\n", stderr);
         p101_fputs(env, err, "  --instrumentation-output FILE  write instrumentation coverage\n", stderr);
@@ -65,19 +65,19 @@ static bool add_allowed_copy(const struct p101_env *env, struct p101_wrapper_arg
 
     P101_TRACE_SCOPE(env);
     added = false;
-    if(arguments->allowed_count >= P101_WRAPPER_MAX_NAMES || value == NULL || value[0] == '\0')
+    if(arguments->allowed_usr_count >= P101_WRAPPER_MAX_NAMES || value == NULL || value[0] == '\0')
     {
         goto done;
     }
     length = p101_strlen(env, value);
-    if(length >= sizeof(arguments->allowed_storage[0]))
+    if(length >= sizeof(arguments->allowed_usr_storage[0]))
     {
         goto done;
     }
-    index = arguments->allowed_count;
-    p101_memcpy(env, arguments->allowed_storage[index], value, length + 1U);
-    arguments->allowed[index] = arguments->allowed_storage[index];
-    arguments->allowed_count++;
+    index = arguments->allowed_usr_count;
+    p101_memcpy(env, arguments->allowed_usr_storage[index], value, length + 1U);
+    arguments->allowed_usrs[index] = arguments->allowed_usr_storage[index];
+    arguments->allowed_usr_count++;
     added = true;
 
 done:
@@ -114,9 +114,9 @@ static bool load_allow_file(const struct p101_env *env, struct p101_error *err, 
         {
             line[(size_t)(newline - line)] = '\0';
         }
-        first = p101_strchr(env, line, ':');
-        last  = p101_strrchr(env, line, ':');
-        if(first != NULL && last != NULL && first != last && first[1] != '\0' && last[1] != '\0')
+        first = p101_strchr(env, line, '\t');
+        last  = first == NULL ? NULL : p101_strchr(env, first + 1, '\t');
+        if(first != NULL && last != NULL && p101_strchr(env, last + 1, '\t') == NULL && line[0] != '\0' && last[1] != '\0')
         {
             size_t rule_index;
 
@@ -130,13 +130,13 @@ static bool load_allow_file(const struct p101_env *env, struct p101_error *err, 
             line[(size_t)(last - line)]  = '\0';
             p101_memset(env, &arguments->allow_rules[rule_index], 0, sizeof(arguments->allow_rules[rule_index]));
             p101_snprintf(env, err, arguments->allow_rules[rule_index].path, sizeof(arguments->allow_rules[rule_index].path), "%s", line);
-            p101_snprintf(env, err, arguments->allow_rules[rule_index].function, sizeof(arguments->allow_rules[rule_index].function), "%s", first + 1);
-            p101_snprintf(env, err, arguments->allow_rules[rule_index].callee, sizeof(arguments->allow_rules[rule_index].callee), "%s", last + 1);
+            p101_snprintf(env, err, arguments->allow_rules[rule_index].caller_usr, sizeof(arguments->allow_rules[rule_index].caller_usr), "%s", first + 1);
+            p101_snprintf(env, err, arguments->allow_rules[rule_index].callee_usr, sizeof(arguments->allow_rules[rule_index].callee_usr), "%s", last + 1);
             arguments->allow_rule_count++;
         }
         else if(line[0] != '\0')
         {
-            P101_ERROR_RAISE_USER(err, "Boundary rules must use path:function:callee form.", 1);
+            P101_ERROR_RAISE_USER(err, "Boundary rules must use path<TAB>caller-USR<TAB>callee-USR form; caller-USR may be empty.", 1);
             break;
         }
     }
@@ -174,7 +174,7 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
         {
             arguments->strict_external = true;
         }
-        else if((p101_strcmp(env, argument, "-a") == 0 || p101_strcmp(env, argument, "--allow") == 0) && index + 1 < argc)
+        else if(p101_strcmp(env, argument, "--allow-usr") == 0 && index + 1 < argc)
         {
             if(!add_allowed_copy(env, arguments, argv[++index]))
             {
@@ -269,8 +269,8 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
     {
         arguments->paths[arguments->path_count++] = ".";
     }
-    /* P101_ERROR_CONTRACT_ALLOW_NO_ERROR: automatic discovery is an optional convenience. */
-    if(valid && arguments->compile_database == NULL && p101_c_facts_find_clang_compile_database(env, NULL, arguments->paths[0], discovered, sizeof(discovered)))
+    /* P101_ERROR_OPTIONAL rationale: automatic discovery is an optional convenience. */
+    if(valid && arguments->compile_database == NULL && p101_c_facts_find_clang_compile_database(env, P101_ERROR_OPTIONAL, arguments->paths[0], discovered, sizeof(discovered)))
     {
         p101_snprintf(env, err, arguments->compile_database_storage, sizeof(arguments->compile_database_storage), "%s", discovered);
         arguments->compile_database = arguments->compile_database_storage;
