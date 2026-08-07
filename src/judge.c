@@ -271,6 +271,33 @@ static const char *fact_callee_identity(const struct p101_env *env, const struct
     return identity;
 }
 
+/*
+ * A wrapper must call the native function it wraps; that call is the wrap
+ * itself, not a missed one. Deriving this from the inventory keeps it out of
+ * the checked-in allow files, where it would have to be repeated per library
+ * and could not be told apart from a genuine unwrapped call.
+ */
+static bool call_is_own_wrapper(const struct p101_env *env, const struct p101_wrapper_fact *fact, const struct p101_wrapper_inventory *wrapper)
+{
+    int  p101_call_result_200;
+    bool own;
+
+    P101_TRACE_SCOPE(env);
+    own = false;
+    if(wrapper != NULL)
+    {
+        if(fact->caller_usr[0] != '\0')
+        {
+            p101_call_result_200 = p101_strcmp(env, fact->caller_usr, wrapper->wrapper_usr);
+            if(p101_call_result_200 == 0)
+            {
+                own = true;
+            }
+        }
+    }
+    return own;
+}
+
 static bool is_allowed(const struct p101_env *env, struct p101_wrapper_arguments *arguments, const struct p101_wrapper_fact *fact, const struct p101_wrapper_inventory *wrapper)
 {
     int         p101_expression_result_36;
@@ -284,13 +311,19 @@ static bool is_allowed(const struct p101_env *env, struct p101_wrapper_arguments
     char        macro_identity[P101_WRAPPER_NAME_SIZE];
     const char *callee_usr;
     size_t      index;
+    bool        p101_call_result_201;
     bool        allowed;
 
     P101_TRACE_SCOPE(env);
     macro_identity[0] = '\0';
     callee_usr        = fact_callee_identity(env, fact, wrapper, macro_identity, sizeof(macro_identity));
-    allowed           = false;
-    for(index = 0U; callee_usr != NULL && index < arguments->allowed_usr_count; index++)
+    /*
+     * The wrap itself: p101_x calling native x. Derived from the inventory so
+     * no library has to declare it in an allow file.
+     */
+    p101_call_result_201 = call_is_own_wrapper(env, fact, wrapper);
+    allowed              = p101_call_result_201;
+    for(index = 0U; !allowed && callee_usr != NULL && index < arguments->allowed_usr_count; index++)
     {
         p101_call_result_5 = p101_strcmp(env, arguments->allowed_usrs[index], callee_usr);
         if(p101_call_result_5 == 0)
