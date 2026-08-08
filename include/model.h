@@ -59,6 +59,8 @@ struct p101_wrapper_fact
 {
     enum p101_c_analysis_kind kind;
     char                      path[P101_WRAPPER_PATH_SIZE];
+    /* The resolved file an INCLUDE reached, empty when it did not resolve. */
+    char                      resolved[P101_WRAPPER_PATH_SIZE];
     char                      name[P101_WRAPPER_NAME_SIZE];
     char                      type[P101_WRAPPER_NAME_SIZE];
     char                      caller[P101_WRAPPER_NAME_SIZE];
@@ -103,6 +105,7 @@ struct p101_wrapper_finding
     char                           name[P101_WRAPPER_NAME_SIZE];
     char                           caller[P101_WRAPPER_NAME_SIZE];
     char                           replacement[P101_WRAPPER_NAME_SIZE];
+    char                           allow_identity[P101_WRAPPER_NAME_SIZE];
     size_t                         line;
     size_t                         column;
 };

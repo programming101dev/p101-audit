@@ -14,6 +14,7 @@
 #include <p101_filesystem/p101_unistd.h>
 #include <p101_filesystem/sys/p101_stat.h>
 #include <p101_filesystem/sys/p101_statvfs.h>
+#include <p101_record/record.h>
 #include <stdint.h>
 #include <sys/stat.h>
 
@@ -26,7 +27,8 @@ enum
 };
 
 static bool   add_inventory_mapping(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *original, const char *original_usr, const char *wrapper, const char *wrapper_usr);
-static size_t split_manifest_fields(char *line, char *fields[], size_t capacity);
+static bool   manifest_line_is_over_long(const struct p101_env *env, const char *line, size_t size);
+static size_t split_manifest_fields(const struct p101_env *env, char *line, char *fields[], size_t capacity);
 static bool   add_annotated_inventory(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, size_t first_fact);
 
 static void copy_field(const struct p101_env *env, char *destination, size_t size, const char *source)
@@ -136,51 +138,72 @@ done:
     return added;
 }
 
-static size_t split_manifest_fields(char *line, char *fields[], size_t capacity)
+/*
+ * A row that filled the buffer without a newline was truncated by p101_fgets;
+ * the remainder would otherwise resynchronise as a bogus extra row.
+ */
+static bool manifest_line_is_over_long(const struct p101_env *env, const char *line, size_t size)
+{
+    size_t length;
+    bool   over_long;
+
+    P101_TRACE_SCOPE(env);
+    over_long = false;
+    length    = p101_strlen(env, line);
+    if(length == size - 1U)
+    {
+        const char *p101_call_result_47;
+
+        p101_call_result_47 = p101_strchr(env, line, '\n');
+        if(p101_call_result_47 == NULL)
+        {
+            over_long = true;
+        }
+    }
+    return over_long;
+}
+
+static size_t split_manifest_fields(const struct p101_env *env, char *line, char *fields[], size_t capacity)
 {
     size_t count;
+    size_t length;
     char  *cursor;
 
+    P101_TRACE_SCOPE(env);
+    length = p101_strlen(env, line);
+    while(length > 0U && (line[length - 1U] == '\n' || line[length - 1U] == '\r'))
+    {
+        length--;
+        line[length] = '\0';
+    }
     count  = 0U;
     cursor = line;
-    while(count < capacity)
+    while(count < capacity && cursor != NULL)
     {
-        char *separator;
-
-        fields[count++] = cursor;
-        separator       = cursor;
-        while(*separator != '\0' && *separator != '\t' && *separator != '\n' && *separator != '\r')
-        {
-            separator++;
-        }
-        if(*separator == '\0' || *separator == '\n' || *separator == '\r')
-        {
-            *separator = '\0';
-            break;
-        }
-        *separator = '\0';
-        cursor     = separator + 1;
+        fields[count] = p101_record_split(&cursor);
+        p101_record_unescape_field(fields[count]);
+        count++;
     }
     return count;
 }
 
 static bool load_manifest_file(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *path)
 {
-    int    p101_call_result_16;
-    int    p101_call_result_15;
-    int    p101_call_result_13;
-    char  *p101_call_result_2;
-    int    p101_call_result_3;
-    int    p101_call_result_4;
-    int    p101_call_result_5;
-    bool   p101_call_result_6;
-    FILE  *stream;
-    char   line[MANIFEST_LINE_SIZE];
-    size_t wrapper_column;
-    size_t wrapper_usr_column;
-    size_t original_column;
-    size_t original_usr_column;
-    bool   loaded;
+    int         p101_call_result_16;
+    int         p101_call_result_15;
+    int         p101_call_result_13;
+    const char *p101_call_result_2;
+    int         p101_call_result_3;
+    int         p101_call_result_4;
+    int         p101_call_result_5;
+    bool        p101_call_result_6;
+    FILE       *stream;
+    char        line[MANIFEST_LINE_SIZE];
+    size_t      wrapper_column;
+    size_t      wrapper_usr_column;
+    size_t      original_column;
+    size_t      original_usr_column;
+    bool        loaded;
 
     P101_TRACE_SCOPE(env);
     loaded              = false;
@@ -198,8 +221,15 @@ static bool load_manifest_file(const struct p101_env *env, struct p101_error *er
     {
         char  *fields[MANIFEST_FIELD_LIMIT];
         size_t field_count;
+        bool   p101_call_result_48;
 
-        field_count = split_manifest_fields(line, fields, sizeof(fields) / sizeof(fields[0]));
+        p101_call_result_48 = manifest_line_is_over_long(env, line, sizeof(line));
+        if(p101_call_result_48)
+        {
+            P101_ERROR_RAISE_USER(err, "An API manifest contains an over-long row.", 1);
+            goto close_stream;
+        }
+        field_count = split_manifest_fields(env, line, fields, sizeof(fields) / sizeof(fields[0]));
         for(size_t index = 0U; index < field_count; index++)
         {
             p101_call_result_3 = p101_strcmp(env, fields[index], "function");
@@ -245,13 +275,20 @@ static bool load_manifest_file(const struct p101_env *env, struct p101_error *er
         const char *original_usr;
         size_t      field_count;
         size_t      maximum_column;
+        bool        p101_call_result_49;
 
         p101_call_result_2 = p101_fgets(env, err, line, sizeof(line), stream);
         if(p101_call_result_2 == NULL)
         {
             break;
         }
-        field_count    = split_manifest_fields(line, fields, sizeof(fields) / sizeof(fields[0]));
+        p101_call_result_49 = manifest_line_is_over_long(env, line, sizeof(line));
+        if(p101_call_result_49)
+        {
+            P101_ERROR_RAISE_USER(err, "An API manifest contains an over-long row.", 1);
+            break;
+        }
+        field_count    = split_manifest_fields(env, line, fields, sizeof(fields) / sizeof(fields[0]));
         maximum_column = wrapper_column;
         if(wrapper_usr_column > maximum_column)
         {
@@ -450,14 +487,14 @@ done:
 
 static bool find_workspace_libraries(const struct p101_env *env, const char *program_path, char *path, size_t size)
 {
-    int    p101_expression_result_33;
-    char  *p101_call_result_34;
-    int    p101_expression_result_35;
-    int    p101_call_result_36;
-    char  *p101_call_result_14;
-    char   current[P101_WRAPPER_PATH_SIZE];
-    size_t attempt;
-    bool   found;
+    int         p101_expression_result_33;
+    const char *p101_call_result_34;
+    int         p101_expression_result_35;
+    int         p101_call_result_36;
+    const char *p101_call_result_14;
+    char        current[P101_WRAPPER_PATH_SIZE];
+    size_t      attempt;
+    bool        found;
 
     P101_TRACE_SCOPE(env);
     found = false;
@@ -632,12 +669,12 @@ static bool add_annotated_inventory(const struct p101_env *env, struct p101_erro
 
 static bool path_is_within_header_root(const struct p101_env *env, const char *path, const char *root)
 {
-    char   canonical_root[P101_WRAPPER_PATH_SIZE];
-    char  *resolved;
-    size_t root_length;
-    size_t path_length;
-    int    comparison;
-    bool   within;
+    char        canonical_root[P101_WRAPPER_PATH_SIZE];
+    const char *resolved;
+    size_t      root_length;
+    size_t      path_length;
+    int         comparison;
+    bool        within;
 
     P101_TRACE_SCOPE(env);
     within   = false;
@@ -698,9 +735,6 @@ bool p101_wrapper_model_load_inventory(const struct p101_env *env, struct p101_e
 {
     int    p101_expression_result_44;
     bool   p101_call_result_45;
-    bool   p101_call_result_46;
-    bool   p101_call_result_11;
-    bool   p101_call_result_12;
     char   libraries[P101_WRAPPER_PATH_SIZE];
     size_t index;
     bool   loaded;
@@ -711,6 +745,8 @@ bool p101_wrapper_model_load_inventory(const struct p101_env *env, struct p101_e
     p101_expression_result_44 = 0;
     if(p101_call_result_45)
     {
+        bool p101_call_result_46;
+
         p101_call_result_46 = load_manifests(env, err, model, libraries);
         if(!p101_call_result_46)
         {
@@ -726,6 +762,8 @@ bool p101_wrapper_model_load_inventory(const struct p101_env *env, struct p101_e
         struct p101_c_analysis_options options;
         const char                    *path;
         size_t                         first_fact;
+        bool                           p101_call_result_11;
+        bool                           p101_call_result_12;
 
         path       = arguments->header_roots[index];
         first_fact = model->fact_count;

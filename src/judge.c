@@ -63,8 +63,6 @@ done:
 
 static const char *canonical_native_usr(const struct p101_env *env, const char *usr)
 {
-    int p101_call_result_2;
-
     static const struct
     {
         const char *lowered;
@@ -93,6 +91,8 @@ static const char *canonical_native_usr(const struct p101_env *env, const char *
     canonical = usr;
     for(index = 0U; index < sizeof(mappings) / sizeof(mappings[0]); index++)
     {
+        int p101_call_result_2;
+
         p101_call_result_2 = p101_strcmp(env, usr, mappings[index].lowered);
         if(p101_call_result_2 == 0)
         {
@@ -106,8 +106,6 @@ static const char *canonical_native_usr(const struct p101_env *env, const char *
 static const struct p101_wrapper_inventory *find_wrapper(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *fact)
 {
     int                                  p101_expression_result_16;
-    int                                  p101_expression_result_17;
-    int                                  p101_expression_result_18;
     int                                  p101_call_result_19;
     int                                  p101_expression_result_20;
     int                                  p101_expression_result_21;
@@ -121,6 +119,8 @@ static const struct p101_wrapper_inventory *find_wrapper(const struct p101_env *
     for(size_t index = 0U; index < model->inventory_count; index++)
     {
         const struct p101_wrapper_inventory *candidate;
+        int                                  p101_expression_result_17;
+        int                                  p101_expression_result_18;
 
         candidate                 = &model->inventory[index];
         p101_expression_result_18 = 0;
@@ -216,7 +216,6 @@ done:
 
 static bool path_matches(const struct p101_env *env, const char *pattern, const char *path)
 {
-    int         p101_call_result_4;
     const char *candidate;
     bool        matches;
 
@@ -225,6 +224,8 @@ static bool path_matches(const struct p101_env *env, const char *pattern, const 
     matches   = false;
     for(;;)
     {
+        int p101_call_result_4;
+
         /* P101_ERROR_OPTIONAL rationale: match failure and no-match are both a false probe. */
         p101_call_result_4 = p101_fnmatch(env, P101_ERROR_OPTIONAL, pattern, candidate, 0);
         if(p101_call_result_4 == 0)
@@ -273,18 +274,13 @@ static const char *fact_callee_identity(const struct p101_env *env, const struct
 
 static bool is_allowed(const struct p101_env *env, struct p101_wrapper_arguments *arguments, const struct p101_wrapper_fact *fact, const struct p101_wrapper_inventory *wrapper)
 {
-    int         p101_expression_result_36;
-    int         p101_expression_result_37;
-    int         p101_expression_result_38;
     bool        p101_call_result_39;
     int         p101_expression_result_40;
     int         p101_call_result_41;
     int         p101_call_result_42;
-    int         p101_call_result_5;
     char        macro_identity[P101_WRAPPER_NAME_SIZE];
     const char *callee_usr;
     size_t      index;
-    int         p101_call_result_201;
     bool        allowed;
 
     P101_TRACE_SCOPE(env);
@@ -304,6 +300,8 @@ static bool is_allowed(const struct p101_env *env, struct p101_wrapper_arguments
     {
         if(fact->caller_usr[0] != '\0')
         {
+            int p101_call_result_201;
+
             p101_call_result_201 = p101_strcmp(env, fact->caller_usr, wrapper->wrapper_usr);
             if(p101_call_result_201 == 0)
             {
@@ -313,6 +311,8 @@ static bool is_allowed(const struct p101_env *env, struct p101_wrapper_arguments
     }
     for(index = 0U; !allowed && callee_usr != NULL && index < arguments->allowed_usr_count; index++)
     {
+        int p101_call_result_5;
+
         p101_call_result_5 = p101_strcmp(env, arguments->allowed_usrs[index], callee_usr);
         if(p101_call_result_5 == 0)
         {
@@ -322,6 +322,10 @@ static bool is_allowed(const struct p101_env *env, struct p101_wrapper_arguments
     }
     for(index = 0U; !allowed && index < arguments->allow_rule_count; index++)
     {
+        int p101_expression_result_36;
+        int p101_expression_result_37;
+        int p101_expression_result_38;
+
         p101_expression_result_38 = 0;
         if(callee_usr != NULL)
         {
@@ -494,7 +498,7 @@ static bool is_allowed_macro_lowering(const struct p101_env *env, struct p101_wr
     return allowed;
 }
 
-static bool add_finding(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, enum p101_wrapper_finding_kind kind, const struct p101_wrapper_fact *fact, const char *name, const char *replacement)
+static bool add_finding(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, enum p101_wrapper_finding_kind kind, const struct p101_wrapper_fact *fact, const char *name, const char *replacement, const char *allow_identity)
 {
     int                          p101_expression_result_52;
     int                          p101_expression_result_53;
@@ -565,148 +569,138 @@ static bool add_finding(const struct p101_env *env, struct p101_error *err, stru
     copy_field(env, finding->name, sizeof(finding->name), name);
     copy_field(env, finding->caller, sizeof(finding->caller), fact->caller[0] == '\0' ? "?" : fact->caller);
     copy_field(env, finding->replacement, sizeof(finding->replacement), replacement);
+    copy_field(env, finding->allow_identity, sizeof(finding->allow_identity), allow_identity == NULL ? "" : allow_identity);
 
 done:
     return added;
 }
 
-static bool include_is_platform_specific(const struct p101_env *env, const char *name)
+enum platform_include_match
 {
-    int         p101_expression_result_59;
-    int         p101_expression_result_60;
-    int         p101_expression_result_61;
-    int         p101_expression_result_62;
-    int         p101_expression_result_63;
-    int         p101_call_result_64;
-    int         p101_call_result_65;
-    int         p101_call_result_66;
-    int         p101_call_result_67;
-    int         p101_call_result_68;
-    int         p101_call_result_69;
-    const char *p101_call_result_15;
-    const char *p101_call_result_14;
-    const char *p101_call_result_6;
-    const char *p101_call_result_7;
-    const char *p101_call_result_8;
-    const char *p101_call_result_9;
-    const char *relative;
+    PLATFORM_MATCH_DIRECTORY,
+    PLATFORM_MATCH_SUFFIX
+};
+
+struct platform_include_pattern
+{
+    enum platform_include_match match;
+    const char                 *text;
+};
+
+/*
+ * A directory pattern is written with both separators so it can be probed
+ * anywhere in a path; the same text minus its leading separator matches an
+ * include spelling that opens with that directory.
+ */
+static bool path_has_directory_component(const struct p101_env *env, const char *path, const char *component)
+{
+    const char *found;
+    bool        contains;
+
+    P101_TRACE_SCOPE(env);
+    contains = false;
+    found    = p101_strstr(env, path, component);
+    if(found != NULL)
+    {
+        contains = true;
+    }
+    else
+    {
+        size_t length;
+        int    comparison;
+
+        length     = p101_strlen(env, component);
+        comparison = p101_strncmp(env, path, component + 1, length - 1U);
+        if(comparison == 0)
+        {
+            contains = true;
+        }
+    }
+    return contains;
+}
+
+/*
+ * A suffix pattern matches a whole trailing path component sequence, so
+ * "sys/event.h" matches both the bare include spelling and the resolved
+ * "/usr/include/sys/event.h", but never a file merely ending in those bytes.
+ */
+static bool path_has_trailing_components(const struct p101_env *env, const char *path, const char *suffix)
+{
+    size_t path_length;
+    size_t suffix_length;
+    bool   matches;
+
+    P101_TRACE_SCOPE(env);
+    matches       = false;
+    path_length   = p101_strlen(env, path);
+    suffix_length = p101_strlen(env, suffix);
+    if(path_length >= suffix_length)
+    {
+        int comparison;
+
+        comparison = p101_strcmp(env, path + path_length - suffix_length, suffix);
+        if(comparison == 0 && (path_length == suffix_length || path[path_length - suffix_length - 1U] == '/'))
+        {
+            matches = true;
+        }
+    }
+    return matches;
+}
+
+/*
+ * Classify on the resolved file when the producer found one: the spelling
+ * says what the author asked for, the resolved path says which platform's
+ * header the build actually consumed.
+ */
+static bool include_is_platform_specific(const struct p101_env *env, const char *name, const char *resolved)
+{
+    static const struct platform_include_pattern patterns[] = {
+        {PLATFORM_MATCH_DIRECTORY, "/linux/"       },
+        {PLATFORM_MATCH_DIRECTORY, "/mach/"        },
+        {PLATFORM_MATCH_DIRECTORY, "/windows/"     },
+        {PLATFORM_MATCH_SUFFIX,    "sys/event.h"   },
+        {PLATFORM_MATCH_SUFFIX,    "sys/kqueue.h"  },
+        {PLATFORM_MATCH_SUFFIX,    "sys/sysctl.h"  },
+        {PLATFORM_MATCH_SUFFIX,    "sys/epoll.h"   },
+        {PLATFORM_MATCH_SUFFIX,    "sys/eventfd.h" },
+        {PLATFORM_MATCH_SUFFIX,    "sys/inotify.h" },
+        {PLATFORM_MATCH_SUFFIX,    "sys/signalfd.h"},
+        {PLATFORM_MATCH_SUFFIX,    "sys/timerfd.h" },
+        {PLATFORM_MATCH_SUFFIX,    "windows.h"     },
+        {PLATFORM_MATCH_SUFFIX,    "pthread_np.h"  },
+    };
+
+    const char *subject;
+    size_t      index;
     bool        platform_specific;
 
     P101_TRACE_SCOPE(env);
-    relative           = name;
-    p101_call_result_6 = p101_strstr(env, name, "/linux/");
-    if(p101_call_result_6 != NULL)
+    platform_specific = false;
+    subject           = name;
+    if(resolved != NULL && resolved[0] != '\0')
     {
-        p101_call_result_7 = p101_strstr(env, name, "/linux/");
-        relative           = p101_call_result_7 + 1;
+        subject = resolved;
     }
-    else
+    for(index = 0U; index < sizeof(patterns) / sizeof(patterns[0]); index++)
     {
-        p101_call_result_14 = p101_strstr(env, name, "/mach/");
-        if(p101_call_result_14 != NULL)
+        if(patterns[index].match == PLATFORM_MATCH_DIRECTORY)
         {
-            p101_call_result_8 = p101_strstr(env, name, "/mach/");
-            relative           = p101_call_result_8 + 1;
+            platform_specific = path_has_directory_component(env, subject, patterns[index].text);
         }
         else
         {
-            p101_call_result_15 = p101_strstr(env, name, "/windows/");
-            if(p101_call_result_15 != NULL)
-            {
-                p101_call_result_9 = p101_strstr(env, name, "/windows/");
-                relative           = p101_call_result_9 + 1;
-            }
+            platform_specific = path_has_trailing_components(env, subject, patterns[index].text);
         }
-    }
-    p101_call_result_64 = p101_strcmp(env, relative, "sys/event.h");
-    if(p101_call_result_64 == 0)
-    {
-        p101_expression_result_63 = 1;
-    }
-    else
-    {
-        p101_call_result_65 = p101_strcmp(env, relative, "sys/kqueue.h");
-        if(p101_call_result_65 == 0)
+        if(platform_specific)
         {
-            p101_expression_result_63 = 1;
-        }
-        else
-        {
-            p101_expression_result_63 = 0;
+            break;
         }
     }
-    if(p101_expression_result_63)
-    {
-        p101_expression_result_62 = 1;
-    }
-    else
-    {
-        p101_call_result_66 = p101_strcmp(env, relative, "sys/sysctl.h");
-        if(p101_call_result_66 == 0)
-        {
-            p101_expression_result_62 = 1;
-        }
-        else
-        {
-            p101_expression_result_62 = 0;
-        }
-    }
-    if(p101_expression_result_62)
-    {
-        p101_expression_result_61 = 1;
-    }
-    else
-    {
-        p101_call_result_67 = p101_strncmp(env, relative, "linux/", sizeof("linux/") - 1U);
-        if(p101_call_result_67 == 0)
-        {
-            p101_expression_result_61 = 1;
-        }
-        else
-        {
-            p101_expression_result_61 = 0;
-        }
-    }
-    if(p101_expression_result_61)
-    {
-        p101_expression_result_60 = 1;
-    }
-    else
-    {
-        p101_call_result_68 = p101_strncmp(env, relative, "mach/", sizeof("mach/") - 1U);
-        if(p101_call_result_68 == 0)
-        {
-            p101_expression_result_60 = 1;
-        }
-        else
-        {
-            p101_expression_result_60 = 0;
-        }
-    }
-    if(p101_expression_result_60)
-    {
-        p101_expression_result_59 = 1;
-    }
-    else
-    {
-        p101_call_result_69 = p101_strncmp(env, relative, "windows/", sizeof("windows/") - 1U);
-        if(p101_call_result_69 == 0)
-        {
-            p101_expression_result_59 = 1;
-        }
-        else
-        {
-            p101_expression_result_59 = 0;
-        }
-    }
-    platform_specific = p101_expression_result_59 != 0;
     return platform_specific;
 }
 
 bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, struct p101_wrapper_arguments *arguments)
 {
-    int    p101_expression_result_70;
-    int    p101_expression_result_71;
     bool   p101_call_result_72;
     int    p101_expression_result_73;
     int    p101_expression_result_74;
@@ -729,6 +723,8 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
     for(index = 0U; judged && index < model->fact_count; index++)
     {
         const struct p101_wrapper_fact *fact;
+        int                             p101_expression_result_70;
+        int                             p101_expression_result_71;
 
         fact                      = &model->facts[index];
         p101_expression_result_71 = 0;
@@ -742,7 +738,7 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
         p101_expression_result_70 = 0;
         if(p101_expression_result_71)
         {
-            p101_call_result_72 = include_is_platform_specific(env, fact->name);
+            p101_call_result_72 = include_is_platform_specific(env, fact->name, fact->resolved);
             if(p101_call_result_72)
             {
                 p101_expression_result_70 = 1;
@@ -750,7 +746,7 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
         }
         if(p101_expression_result_70)
         {
-            p101_call_result_10 = add_finding(env, err, model, P101_WRAPPER_PORTABILITY, fact, fact->name, "");
+            p101_call_result_10 = add_finding(env, err, model, P101_WRAPPER_PORTABILITY, fact, fact->name, "", "");
             if(!p101_call_result_10)
             {
                 judged = false;
@@ -861,6 +857,8 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
             {
                 enum p101_wrapper_finding_kind finding_kind;
                 const char                    *replacement;
+                const char                    *allow_identity;
+                char                           macro_identity[P101_WRAPPER_NAME_SIZE];
 
                 finding_kind = P101_WRAPPER_EXTERNAL;
                 if(fact->is_indirect)
@@ -871,8 +869,11 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
                 {
                     finding_kind = P101_WRAPPER_MISSED;
                 }
+                macro_identity[0] = '\0';
+                /* The very identity is_allowed() matched on, so an operator can copy it into an allow file. */
+                allow_identity      = fact_callee_identity(env, fact, wrapper, macro_identity, sizeof(macro_identity));
                 replacement         = wrapper == NULL ? "" : wrapper->wrapper;
-                p101_call_result_12 = add_finding(env, err, model, finding_kind, fact, name, replacement);
+                p101_call_result_12 = add_finding(env, err, model, finding_kind, fact, name, replacement, allow_identity);
                 if(!p101_call_result_12)
                 {
                     judged = false;
@@ -886,7 +887,15 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
         {
             char message[P101_WRAPPER_PATH_SIZE];
 
-            p101_snprintf(env, err, message, sizeof(message), "Wrapper boundary rule did not match any call: %s<TAB>%s<TAB>%s", arguments->allow_rules[index].path, arguments->allow_rules[index].caller_usr, arguments->allow_rules[index].callee_usr);
+            p101_snprintf(
+                env,
+                err,
+                message,
+                sizeof(message),
+                "Wrapper boundary rule did not match any call: %s<TAB>%s<TAB>%s (the callee column takes the derived allow-rule identity: the raw USR, c:@T@... for an indirect call, or macro:<name>; each reported finding prints its own as \"(allow-rule callee: ...)\")",
+                arguments->allow_rules[index].path,
+                arguments->allow_rules[index].caller_usr,
+                arguments->allow_rules[index].callee_usr);
             p101_call_result_13 = p101_error_has_no_error(err);
             if(p101_call_result_13)
             {

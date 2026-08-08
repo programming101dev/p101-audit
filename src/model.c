@@ -47,14 +47,16 @@ static void copy_field(const struct p101_env *env, char *destination, size_t siz
 
 static bool identity_fits(const struct p101_env *env, const char *identity, size_t size)
 {
-    int    p101_expression_result_3;
-    size_t p101_call_result_4;
+    int p101_expression_result_3;
+
     if(identity == NULL)
     {
         p101_expression_result_3 = 1;
     }
     else
     {
+        size_t p101_call_result_4;
+
         p101_call_result_4 = p101_strlen(env, identity);
         if(p101_call_result_4 < size)
         {
@@ -162,6 +164,7 @@ bool p101_wrapper_analysis_observer(const struct p101_env *env, struct p101_erro
     fact->needs_env        = record->has_env_parameter;
     fact->needs_error      = record->has_error_parameter;
     copy_field(env, fact->path, sizeof(fact->path), record->path);
+    copy_field(env, fact->resolved, sizeof(fact->resolved), record->resolved_include);
     copy_field(env, fact->name, sizeof(fact->name), record->name);
     copy_field(env, fact->type, sizeof(fact->type), record->type);
     copy_field(env, fact->caller, sizeof(fact->caller), record->caller);
@@ -496,17 +499,18 @@ static int compare_facts(const void *left, const void *right)
 
 static void deduplicate_facts(const struct p101_env *env, struct p101_wrapper_model *model)
 {
-    int    p101_call_result_2;
-    size_t read_index;
-    size_t write_index;
-
     P101_TRACE_SCOPE(env);
     if(model->fact_count >= 2U)
     {
+        size_t read_index;
+        size_t write_index;
+
         p101_qsort(env, model->facts, model->fact_count, sizeof(model->facts[0]), compare_facts);
         write_index = 1U;
         for(read_index = 1U; read_index < model->fact_count; read_index++)
         {
+            int p101_call_result_2;
+
             p101_call_result_2 = compare_facts(&model->facts[write_index - 1U], &model->facts[read_index]);
             if(p101_call_result_2 != 0)
             {

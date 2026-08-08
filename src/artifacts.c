@@ -2,6 +2,8 @@
 #include <p101_c/p101_stdio.h>
 #include <p101_c/p101_stdlib.h>
 #include <p101_c/p101_string.h>
+#include <p101_c_facts/facts.h>
+#include <stddef.h>
 
 struct instrumentation_capabilities
 {
@@ -15,66 +17,41 @@ struct instrumentation_capabilities
 
 static void add_role_capability(const struct p101_env *env, struct instrumentation_capabilities *capabilities, const char *role)
 {
-    int p101_call_result_21;
-    int p101_call_result_20;
-    int p101_call_result_19;
-    int p101_call_result_18;
-    int p101_call_result_17;
-    int p101_call_result_1;
+    static const char *const ROLE_NAMES[] = {
+        "CALLEE_SEMANTIC_ROLE:p101:instrumentation:trace-entry",
+        "CALLEE_SEMANTIC_ROLE:p101:instrumentation:trace-exit",
+        "CALLEE_SEMANTIC_ROLE:p101:instrumentation:fault",
+        "CALLEE_SEMANTIC_ROLE:p101:instrumentation:fd",
+        "CALLEE_SEMANTIC_ROLE:p101:instrumentation:allocation",
+        "CALLEE_SEMANTIC_ROLE:p101:instrumentation:resource",
+    };
+
+    /* Parallel to ROLE_NAMES: each entry is the flag that role sets. */
+    bool *const ROLE_FLAGS[] = {
+        &capabilities->trace_entry,
+        &capabilities->trace_exit,
+        &capabilities->fault,
+        &capabilities->fd,
+        &capabilities->allocation,
+        &capabilities->resource,
+    };
+
     P101_TRACE_SCOPE(env);
-    p101_call_result_1 = p101_strcmp(env, role, "CALLEE_SEMANTIC_ROLE:p101:instrumentation:trace-entry");
-    if(p101_call_result_1 == 0)
+    for(size_t index = 0U; index < sizeof(ROLE_NAMES) / sizeof(ROLE_NAMES[0]); index++)
     {
-        capabilities->trace_entry = true;
-    }
-    else
-    {
-        p101_call_result_17 = p101_strcmp(env, role, "CALLEE_SEMANTIC_ROLE:p101:instrumentation:trace-exit");
-        if(p101_call_result_17 == 0)
+        int p101_call_result_1;
+
+        p101_call_result_1 = p101_strcmp(env, role, ROLE_NAMES[index]);
+        if(p101_call_result_1 == 0)
         {
-            capabilities->trace_exit = true;
-        }
-        else
-        {
-            p101_call_result_18 = p101_strcmp(env, role, "CALLEE_SEMANTIC_ROLE:p101:instrumentation:fault");
-            if(p101_call_result_18 == 0)
-            {
-                capabilities->fault = true;
-            }
-            else
-            {
-                p101_call_result_19 = p101_strcmp(env, role, "CALLEE_SEMANTIC_ROLE:p101:instrumentation:fd");
-                if(p101_call_result_19 == 0)
-                {
-                    capabilities->fd = true;
-                }
-                else
-                {
-                    p101_call_result_20 = p101_strcmp(env, role, "CALLEE_SEMANTIC_ROLE:p101:instrumentation:allocation");
-                    if(p101_call_result_20 == 0)
-                    {
-                        capabilities->allocation = true;
-                    }
-                    else
-                    {
-                        p101_call_result_21 = p101_strcmp(env, role, "CALLEE_SEMANTIC_ROLE:p101:instrumentation:resource");
-                        if(p101_call_result_21 == 0)
-                        {
-                            capabilities->resource = true;
-                        }
-                    }
-                }
-            }
+            *ROLE_FLAGS[index] = true;
+            break;
         }
     }
 }
 
 static size_t find_function_fact(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *call)
 {
-    int    p101_expression_result_22;
-    int    p101_expression_result_23;
-    int    p101_expression_result_24;
-    int    p101_call_result_25;
     size_t found;
 
     P101_TRACE_SCOPE(env);
@@ -82,6 +59,9 @@ static size_t find_function_fact(const struct p101_env *env, const struct p101_w
     for(size_t index = 0U; index < model->fact_count; index++)
     {
         const struct p101_wrapper_fact *candidate;
+        int                             p101_expression_result_22;
+        int                             p101_expression_result_23;
+        int                             p101_expression_result_24;
 
         candidate                 = &model->facts[index];
         p101_expression_result_24 = 0;
@@ -103,6 +83,8 @@ static size_t find_function_fact(const struct p101_env *env, const struct p101_w
         p101_expression_result_22 = 0;
         if(p101_expression_result_23)
         {
+            int p101_call_result_25;
+
             p101_call_result_25 = p101_strcmp(env, candidate->usr, call->usr);
             if(p101_call_result_25 == 0)
             {
@@ -271,11 +253,6 @@ static size_t find_calling_function(const struct p101_env *env, const struct p10
 
 static size_t find_function_at_source_location(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *fact)
 {
-    int    p101_expression_result_33;
-    int    p101_expression_result_34;
-    int    p101_expression_result_35;
-    int    p101_expression_result_36;
-    int    p101_call_result_37;
     size_t nearest;
 
     P101_TRACE_SCOPE(env);
@@ -283,6 +260,10 @@ static size_t find_function_at_source_location(const struct p101_env *env, const
     for(size_t index = 0U; index < model->fact_count; index++)
     {
         const struct p101_wrapper_fact *candidate;
+        int                             p101_expression_result_33;
+        int                             p101_expression_result_34;
+        int                             p101_expression_result_35;
+        int                             p101_expression_result_36;
 
         candidate                 = &model->facts[index];
         p101_expression_result_36 = 0;
@@ -296,6 +277,8 @@ static size_t find_function_at_source_location(const struct p101_env *env, const
         p101_expression_result_35 = 0;
         if(p101_expression_result_36)
         {
+            int p101_call_result_37;
+
             p101_call_result_37 = p101_strcmp(env, candidate->path, fact->path);
             if(p101_call_result_37 == 0)
             {
@@ -329,10 +312,6 @@ static size_t find_function_at_source_location(const struct p101_env *env, const
 
 static void collect_capabilities(const struct p101_env *env, const struct p101_wrapper_model *model, struct instrumentation_capabilities *capabilities)
 {
-    int  p101_expression_result_38;
-    int  p101_call_result_39;
-    int  p101_expression_result_40;
-    int  p101_call_result_41;
     int  p101_expression_result_42;
     bool p101_call_result_43;
     bool changed;
@@ -341,23 +320,22 @@ static void collect_capabilities(const struct p101_env *env, const struct p101_w
     for(size_t index = 0U; index < model->fact_count; index++)
     {
         const struct p101_wrapper_fact *fact;
+        enum p101_c_note_kind           p101_call_result_39;
         size_t                          function;
+        bool                            is_trace_scope;
 
         fact = &model->facts[index];
         if(fact->kind != P101_C_ANALYSIS_CALL && fact->kind != P101_C_ANALYSIS_NOTE)
         {
             continue;
         }
-        p101_expression_result_38 = 0;
+        p101_call_result_39 = P101_C_NOTE_OTHER;
         if(fact->kind == P101_C_ANALYSIS_NOTE)
         {
-            p101_call_result_39 = p101_strcmp(env, fact->name, "TYPE_SEMANTIC_ROLE:p101:trace-scope");
-            if(p101_call_result_39 == 0)
-            {
-                p101_expression_result_38 = 1;
-            }
+            p101_call_result_39 = p101_c_note_kind_from_name(env, fact->name);
         }
-        if(p101_expression_result_38)
+        is_trace_scope = p101_call_result_39 == P101_C_NOTE_TRACE_USE;
+        if(is_trace_scope)
         {
             function = find_function_at_source_location(env, model, fact);
         }
@@ -369,16 +347,7 @@ static void collect_capabilities(const struct p101_env *env, const struct p101_w
         {
             continue;
         }
-        p101_expression_result_40 = 0;
-        if(fact->kind == P101_C_ANALYSIS_NOTE)
-        {
-            p101_call_result_41 = p101_strcmp(env, fact->name, "TYPE_SEMANTIC_ROLE:p101:trace-scope");
-            if(p101_call_result_41 == 0)
-            {
-                p101_expression_result_40 = 1;
-            }
-        }
-        if(p101_expression_result_40)
+        if(is_trace_scope)
         {
             capabilities[function].trace_entry = true;
             capabilities[function].trace_exit  = true;
@@ -688,22 +657,20 @@ done:
 bool p101_wrapper_write_optional_outputs(const struct p101_env *env, struct p101_error *err, const struct p101_wrapper_model *model, const struct p101_wrapper_arguments *arguments)
 {
     int  p101_expression_result_46;
-    bool p101_call_result_47;
     int  p101_expression_result_48;
     int  p101_expression_result_49;
-    bool p101_call_result_50;
     int  p101_expression_result_51;
     int  p101_expression_result_52;
-    bool p101_call_result_53;
     int  p101_expression_result_54;
     int  p101_expression_result_55;
-    bool p101_call_result_56;
     bool success;
 
     success                   = true;
     p101_expression_result_46 = 0;
     if(arguments->facts_output != NULL)
     {
+        bool p101_call_result_47;
+
         p101_call_result_47 = write_facts_file(env, err, model, arguments->facts_output);
         if(!p101_call_result_47)
         {
@@ -725,6 +692,8 @@ bool p101_wrapper_write_optional_outputs(const struct p101_env *env, struct p101
     p101_expression_result_48 = 0;
     if(p101_expression_result_49)
     {
+        bool p101_call_result_50;
+
         p101_call_result_50 = write_manifest(env, err, model, arguments);
         if(!p101_call_result_50)
         {
@@ -746,6 +715,8 @@ bool p101_wrapper_write_optional_outputs(const struct p101_env *env, struct p101
     p101_expression_result_51 = 0;
     if(p101_expression_result_52)
     {
+        bool p101_call_result_53;
+
         p101_call_result_53 = write_mutations(env, err, model, arguments->mutation_output);
         if(!p101_call_result_53)
         {
@@ -767,6 +738,8 @@ bool p101_wrapper_write_optional_outputs(const struct p101_env *env, struct p101
     p101_expression_result_54 = 0;
     if(p101_expression_result_55)
     {
+        bool p101_call_result_56;
+
         p101_call_result_56 = write_instrumentation(env, err, model, arguments->instrumentation_output);
         if(!p101_call_result_56)
         {

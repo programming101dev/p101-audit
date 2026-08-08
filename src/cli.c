@@ -2,10 +2,19 @@
 #include <p101_c/p101_stdio.h>
 #include <p101_c/p101_string.h>
 #include <p101_c_facts/project.h>
+#include <p101_record/record.h>
 
 enum
 {
     INPUT_LINE_SIZE = 1024
+};
+
+enum
+{
+    ALLOW_FIELD_PATH = 0,
+    ALLOW_FIELD_CALLER,
+    ALLOW_FIELD_CALLEE,
+    ALLOW_FIELD_COUNT
 };
 
 static bool add_value(const char **values, size_t *count, size_t capacity, const char *value);
@@ -86,12 +95,8 @@ done:
 
 static bool load_allow_file(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_arguments *arguments, const char *path)
 {
-    int         p101_expression_result_13;
-    int         p101_expression_result_14;
-    int         p101_expression_result_15;
-    int         p101_expression_result_16;
     const char *p101_call_result_17;
-    char       *line_result;
+    const char *line_result;
     FILE       *stream;
     char        line[INPUT_LINE_SIZE];
     bool        loaded;
@@ -105,91 +110,69 @@ static bool load_allow_file(const struct p101_env *env, struct p101_error *err, 
     }
     for(;;)
     {
+        char       *fields[ALLOW_FIELD_COUNT];
         const char *comment;
-        const char *newline;
-        const char *first;
-        const char *last;
+        char       *cursor;
+        size_t      count;
+        size_t      length;
+        size_t      rule_index;
+        bool        blank;
 
         line_result = p101_fgets(env, err, line, sizeof(line), stream);
         if(line_result == NULL)
         {
             break;
         }
+        length              = p101_strlen(env, line);
+        p101_call_result_17 = p101_strchr(env, line, '\n');
+
+        /*
+         * A rule that filled the buffer without a newline was truncated by
+         * p101_fgets; its tail must not resynchronise as another rule.
+         */
+        if(length == sizeof(line) - 1U && p101_call_result_17 == NULL)
+        {
+            P101_ERROR_RAISE_USER(err, "A wrapper boundary rule row is too long.", 1);
+            break;
+        }
         comment = p101_strchr(env, line, '#');
         if(comment != NULL)
         {
-            line[(size_t)(comment - line)] = '\0';
+            length       = (size_t)(comment - line);
+            line[length] = '\0';
         }
-        newline = p101_strchr(env, line, '\n');
-        if(newline != NULL)
+        while(length > 0U && (line[length - 1U] == '\n' || line[length - 1U] == '\r'))
         {
-            line[(size_t)(newline - line)] = '\0';
+            length--;
+            line[length] = '\0';
         }
-        first = p101_strchr(env, line, '\t');
-        if(first == NULL)
+        blank  = line[0] == '\0';
+        cursor = line;
+        for(count = 0U; count < ALLOW_FIELD_COUNT && cursor != NULL; count++)
         {
-            last = NULL;
+            fields[count] = p101_record_split(&cursor);
+            p101_record_unescape_field(fields[count]);
         }
-        else
+        if(count != ALLOW_FIELD_COUNT || cursor != NULL || fields[ALLOW_FIELD_PATH][0] == '\0' || fields[ALLOW_FIELD_CALLEE][0] == '\0')
         {
-            last = p101_strchr(env, first + 1, '\t');
-        }
-        p101_expression_result_16 = 0;
-        if(first != NULL)
-        {
-            if(last != NULL)
+            if(blank)
             {
-                p101_expression_result_16 = 1;
+                continue;
             }
-        }
-        p101_expression_result_15 = 0;
-        if(p101_expression_result_16)
-        {
-            p101_call_result_17 = p101_strchr(env, last + 1, '\t');
-            if(p101_call_result_17 == NULL)
-            {
-                p101_expression_result_15 = 1;
-            }
-        }
-        p101_expression_result_14 = 0;
-        if(p101_expression_result_15)
-        {
-            if(line[0] != '\0')
-            {
-                p101_expression_result_14 = 1;
-            }
-        }
-        p101_expression_result_13 = 0;
-        if(p101_expression_result_14)
-        {
-            if(last[1] != '\0')
-            {
-                p101_expression_result_13 = 1;
-            }
-        }
-        if(p101_expression_result_13)
-        {
-            size_t rule_index;
-
-            if(arguments->allow_rule_count >= P101_WRAPPER_MAX_NAMES)
-            {
-                P101_ERROR_RAISE_USER(err, "Too many wrapper boundary rules.", 1);
-                break;
-            }
-            rule_index                   = arguments->allow_rule_count;
-            line[(size_t)(first - line)] = '\0';
-            line[(size_t)(last - line)]  = '\0';
-            p101_memset(env, &arguments->allow_rules[rule_index], 0, sizeof(arguments->allow_rules[rule_index]));
-            p101_snprintf(env, err, arguments->allow_rules[rule_index].path, sizeof(arguments->allow_rules[rule_index].path), "%s", line);
-            p101_snprintf(env, err, arguments->allow_rules[rule_index].caller_usr, sizeof(arguments->allow_rules[rule_index].caller_usr), "%s", first + 1);
-            p101_snprintf(env, err, arguments->allow_rules[rule_index].callee_usr, sizeof(arguments->allow_rules[rule_index].callee_usr), "%s", last + 1);
-            arguments->allow_rule_count++;
-        }
-        else if(line[0] != '\0')
-        {
             P101_ERROR_RAISE_USER(err, "Boundary rules must use path<TAB>caller-USR<TAB>callee-USR form; caller-USR may be empty.", 1);
             break;
         }
+        if(arguments->allow_rule_count >= P101_WRAPPER_MAX_NAMES)
+        {
+            P101_ERROR_RAISE_USER(err, "Too many wrapper boundary rules.", 1);
+            break;
+        }
+        rule_index = arguments->allow_rule_count;
+        p101_memset(env, &arguments->allow_rules[rule_index], 0, sizeof(arguments->allow_rules[rule_index]));
+        p101_snprintf(env, err, arguments->allow_rules[rule_index].path, sizeof(arguments->allow_rules[rule_index].path), "%s", fields[ALLOW_FIELD_PATH]);
+        p101_snprintf(env, err, arguments->allow_rules[rule_index].caller_usr, sizeof(arguments->allow_rules[rule_index].caller_usr), "%s", fields[ALLOW_FIELD_CALLER]);
+        p101_snprintf(env, err, arguments->allow_rules[rule_index].callee_usr, sizeof(arguments->allow_rules[rule_index].callee_usr), "%s", fields[ALLOW_FIELD_CALLEE]);
+        arguments->allow_rule_count++;
     }
     p101_fclose(env, err, stream);
     loaded = p101_error_has_no_error(err);
@@ -201,10 +184,8 @@ done:
 bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error *err, int argc, char *argv[], struct p101_wrapper_arguments *arguments, bool facts_only)
 {
     int  p101_expression_result_18;
-    int  p101_call_result_19;
     int  p101_call_result_20;
     int  p101_expression_result_21;
-    int  p101_call_result_22;
     int  p101_call_result_23;
     int  p101_expression_result_24;
     int  p101_call_result_25;
@@ -234,9 +215,7 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
     bool p101_call_result_49;
     int  p101_expression_result_50;
     int  p101_expression_result_51;
-    bool p101_call_result_52;
     int  p101_expression_result_53;
-    bool p101_call_result_54;
     int  p101_call_result_7;
     int  p101_call_result_8;
     int  p101_call_result_9;
@@ -259,6 +238,8 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
     for(index = 1; index < argc && valid; index++)
     {
         const char *argument;
+        int         p101_call_result_19;
+        int         p101_call_result_22;
 
         argument            = argv[index];
         p101_call_result_19 = p101_strcmp(env, argument, "-h");
@@ -612,6 +593,8 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
     p101_expression_result_50 = 0;
     if(p101_expression_result_51)
     {
+        bool p101_call_result_52;
+
         p101_call_result_52 = p101_c_facts_find_clang_compile_database(env, P101_ERROR_OPTIONAL, arguments->paths[0], discovered, sizeof(discovered));
         if(p101_call_result_52)
         {
@@ -635,6 +618,8 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
     p101_expression_result_53 = 0;
     if(valid)
     {
+        bool p101_call_result_54;
+
         p101_call_result_54 = p101_error_has_no_error(err);
         if(p101_call_result_54)
         {

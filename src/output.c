@@ -2,6 +2,7 @@
 #include <errno.h>
 #include <p101_c/p101_stdio.h>
 #include <p101_c/p101_string.h>
+#include <p101_c_facts/facts.h>
 #include <p101_record/record.h>
 
 static void        tsv_string(const struct p101_env *env, struct p101_error *err, FILE *stream, const char *text);
@@ -21,13 +22,20 @@ void p101_wrapper_output_json_string(const struct p101_env *env, struct p101_err
     }
 }
 
+/*
+ * Deliberately not p101_record_escape_field: that escaper maps NULL to "-", a
+ * lone "-" to "\-", and every other control byte (and DEL) to '?'. The fact
+ * stream emitted here predates those mappings, so adopting them would change
+ * the bytes of existing P101FACT records. Only \\, \t, \n and \r are escaped,
+ * exactly as the fact readers expect.
+ */
 static void tsv_string(const struct p101_env *env, struct p101_error *err, FILE *stream, const char *text)
 {
-    const unsigned char *cursor;
-
     P101_TRACE_SCOPE(env);
     if(text != NULL)
     {
+        const unsigned char *cursor;
+
         for(cursor = (const unsigned char *)text; *cursor != '\0'; cursor++)
         {
             if(*cursor == '\\')
@@ -56,8 +64,6 @@ static void tsv_string(const struct p101_env *env, struct p101_error *err, FILE 
 
 static void module_name(const struct p101_env *env, const char *path, char *module, size_t size)
 {
-    int         p101_expression_result_16;
-    int         p101_call_result_17;
     const char *name;
     const char *dot;
     const char *root;
@@ -74,6 +80,7 @@ static void module_name(const struct p101_env *env, const char *path, char *modu
         root = p101_strstr(env, path, "/include/");
         if(root != NULL)
         {
+            int         p101_expression_result_16;
             const char *package_end;
 
             name                      = root + sizeof("/include/") - 1U;
@@ -81,6 +88,8 @@ static void module_name(const struct p101_env *env, const char *path, char *modu
             p101_expression_result_16 = 0;
             if(package_end != NULL)
             {
+                int p101_call_result_17;
+
                 p101_call_result_17 = p101_strncmp(env, name, "p101_", sizeof("p101_") - 1U);
                 if(p101_call_result_17 == 0)
                 {
@@ -328,7 +337,13 @@ void p101_wrapper_write_audit(const struct p101_env *env, struct p101_error *err
         {
             p101_fprintf(env, err, stdout, " -> %s", finding->replacement);
         }
-        p101_fprintf(env, err, stdout, " [%s]\n", finding->caller);
+        p101_fprintf(env, err, stdout, " [%s]", finding->caller);
+        /* Published last so the line stays byte-identical up to this suffix. */
+        if(finding->allow_identity[0] != '\0')
+        {
+            p101_fprintf(env, err, stdout, "  (allow-rule callee: %s)", finding->allow_identity);
+        }
+        p101_fputc(env, err, '\n', stdout);
         if(finding->kind == P101_WRAPPER_MISSED)
         {
             p101_fprintf(env, err, stdout, "  hint: use %s(env, err, ...) instead of raw %s(...) when the surrounding code is p101-aware\n", finding->replacement, finding->name);
@@ -368,7 +383,7 @@ static void write_fact_prefix(const struct p101_env *env, struct p101_error *err
     char        module[P101_WRAPPER_NAME_SIZE];
 
     module_name(env, fact->path, module, sizeof(module));
-    p101_fputs(env, err, "P101FACT\t6\t", stream);
+    p101_fputs(env, err, P101_C_FACT_PREFIX P101_C_FACT_VERSION "\t", stream);
     p101_call_result_7 = p101_c_analysis_kind_name(fact->kind);
     p101_fputs(env, err, p101_call_result_7, stream);
     p101_fputc(env, err, '\t', stream);
@@ -415,6 +430,8 @@ void p101_wrapper_write_facts(const struct p101_env *env, struct p101_error *err
             tsv_string(env, err, stream, fact->name);
             p101_call_result_9 = bool_text(fact->is_local_include);
             p101_fprintf(env, err, stream, "\t%s", p101_call_result_9);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->resolved);
         }
         else if(fact->kind == P101_C_ANALYSIS_TYPE || fact->kind == P101_C_ANALYSIS_ENUM)
         {
