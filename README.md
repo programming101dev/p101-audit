@@ -62,7 +62,7 @@ Options:
 - `--emit-module-facts` emits the Clang-derived TSV fact stream parsed by
   `lib_c_facts` and consumed by `p101-module-map`; see
   [docs/module-facts.md](docs/module-facts.md).
-- `--facts-output FILE` writes the same P101FACT v6 snapshot while the wrapper
+- `--facts-output FILE` writes the same P101FACT v7 snapshot while the wrapper
   audit runs, so later policy tools reuse the exact AST evidence.
 - `--input-manifest FILE` writes a JSON receipt containing the selected compile
   database and modes, explicit paths, header roots, extra parser arguments,

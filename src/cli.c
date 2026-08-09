@@ -1,6 +1,7 @@
 #include "cli.h"
 #include <p101_c/p101_stdio.h>
 #include <p101_c/p101_string.h>
+#include <p101_c_facts/facts.h>
 #include <p101_c_facts/project.h>
 #include <p101_record/record.h>
 
@@ -27,7 +28,7 @@ void p101_wrapper_usage(const struct p101_env *env, struct p101_error *err, cons
     p101_fprintf(env, err, stderr, "Usage: %s [options] [path...]\n", program_name);
     if(facts_only)
     {
-        p101_fputs(env, err, "Emit P101FACT v6 records using lib_c_facts/libclang.\n", stderr);
+        p101_fputs(env, err, "Emit P101FACT v" P101_C_FACT_VERSION " records using lib_c_facts/libclang.\n", stderr);
     }
     else
     {
@@ -45,7 +46,7 @@ void p101_wrapper_usage(const struct p101_env *env, struct p101_error *err, cons
         p101_fputs(env, err, "  --allow-file FILE       read TSV path/caller-USR/callee-USR rules\n", stderr);
         p101_fputs(env, err, "  --header-root PATH      trust public declarations and wrapper roles under PATH\n", stderr);
         p101_fputs(env, err, "  --show-inventory[-json] print the wrapper inventory\n", stderr);
-        p101_fputs(env, err, "  --emit-module-facts     emit P101FACT v6 records\n", stderr);
+        p101_fputs(env, err, "  --emit-module-facts     emit P101FACT v" P101_C_FACT_VERSION " records\n", stderr);
         p101_fputs(env, err, "  --facts-output FILE     write a reusable fact snapshot\n", stderr);
         p101_fputs(env, err, "  --input-manifest FILE   write an admitted-input receipt\n", stderr);
         p101_fputs(env, err, "  --instrumentation-output FILE  write instrumentation coverage\n", stderr);

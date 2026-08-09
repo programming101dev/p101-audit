@@ -12,5 +12,14 @@ for candidate in "$build_dir" build-clang build-clang-22 build; do
         exec "$root/$candidate/p101-c-facts" "$@"
     fi
 done
-echo "p101-c-facts: native executable not built; run ./change-compiler.sh and ./build.sh" >&2
+# The acceptance preflight removes generated build trees on exit, so the
+# absence of this executable is a routine state rather than a broken
+# checkout. Name the directory: the caller is usually a generator running
+# from somewhere else in the workspace, and "run ./build.sh" alone does not
+# say where.
+printf 'p101-c-facts: native executable not built.\n' >&2
+printf 'Build it with:\n' >&2
+printf '    cd %s\n' "$root" >&2
+printf '    ./change-compiler.sh -c clang\n' >&2
+printf '    ./build.sh\n' >&2
 exit 2

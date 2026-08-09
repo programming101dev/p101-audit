@@ -165,3 +165,63 @@ bool p101_wrapper_is_errno_macro_lowering(const struct p101_env *env, const stru
 done:
     return lowering;
 }
+
+/*
+ * A directory pattern is written with both separators so it can be probed
+ * anywhere in a path; the same text minus its leading separator matches an
+ * include spelling that opens with that directory.
+ */
+bool p101_wrapper_path_has_directory_component(const struct p101_env *env, const char *path, const char *component)
+{
+    const char *found;
+    bool        contains;
+
+    P101_TRACE_SCOPE(env);
+    contains = false;
+    found    = p101_strstr(env, path, component);
+    if(found != NULL)
+    {
+        contains = true;
+    }
+    else
+    {
+        size_t length;
+        int    comparison;
+
+        length     = p101_strlen(env, component);
+        comparison = p101_strncmp(env, path, component + 1, length - 1U);
+        if(comparison == 0)
+        {
+            contains = true;
+        }
+    }
+    return contains;
+}
+
+/*
+ * A suffix pattern matches a whole trailing path component sequence, so
+ * "sys/event.h" matches both the bare include spelling and the resolved
+ * "/usr/include/sys/event.h", but never a file merely ending in those bytes.
+ */
+bool p101_wrapper_path_has_trailing_components(const struct p101_env *env, const char *path, const char *suffix)
+{
+    size_t path_length;
+    size_t suffix_length;
+    bool   matches;
+
+    P101_TRACE_SCOPE(env);
+    matches       = false;
+    path_length   = p101_strlen(env, path);
+    suffix_length = p101_strlen(env, suffix);
+    if(path_length >= suffix_length)
+    {
+        int comparison;
+
+        comparison = p101_strcmp(env, path + path_length - suffix_length, suffix);
+        if(comparison == 0 && (path_length == suffix_length || path[path_length - suffix_length - 1U] == '/'))
+        {
+            matches = true;
+        }
+    }
+    return matches;
+}
