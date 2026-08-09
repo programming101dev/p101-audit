@@ -174,7 +174,7 @@ done:
     {
         /* P101_ERROR_OPTIONAL rationale: diagnostic output must not overwrite the reported failure. */
         p101_call_result_5 = p101_error_get_message(err);
-        p101_fprintf(env, P101_ERROR_OPTIONAL, stderr, "p101-wrapper-audit: %s\n", p101_call_result_5);
+        p101_fprintf(env, P101_ERROR_OPTIONAL, stderr, "audit-wrappers: %s\n", p101_call_result_5);
         status = EXIT_TROUBLE;
     }
 }

@@ -3,7 +3,7 @@ set -euo pipefail
 
 audit=$1
 facts=$2
-work=$(mktemp -d "${TMPDIR:-/tmp}/p101-wrapper-audit-test.XXXXXX")
+work=$(mktemp -d "${TMPDIR:-/tmp}/audit-wrappers-test.XXXXXX")
 semantic_allows=(
     --allow-usr 'c:@F@malloc'
     --allow-usr 'c:@F@free'
@@ -16,6 +16,16 @@ trap 'rm -rf "$work"' EXIT
 
 "$audit" --help >/dev/null 2>&1
 "$facts" --help >/dev/null 2>&1
+set +e
+"$audit" -j >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -eq 2 ]
+set +e
+"$audit" -d:xml >/dev/null 2>&1
+status=$?
+set -e
+[ "$status" -eq 2 ]
 
 mkdir -p "$work/src/alpha"
 cat >"$work/src/alpha/local.h" <<'HEADER'
@@ -121,21 +131,37 @@ set -e
 [ "$status" -eq 1 ]
 grep -q 'malloc -> p101_malloc' "$work/audit.txt"
 grep -q 'free -> p101_free' "$work/audit.txt"
+grep -q ': error: missed-wrapper:' "$work/audit.txt"
+grep -q 'playgrounds/blob/main/lessons/wrapper-boundaries.md' "$work/audit.txt"
 ! grep -q 'local ->' "$work/audit.txt"
 
 set +e
-"$audit" -j "$work" >"$work/audit.json" 2>"$work/audit-json.err"
+"$audit" -d:json "$work" >"$work/audit.json" 2>"$work/audit-json.err"
 status=$?
 set -e
 [ "$status" -eq 1 ]
-grep -q '"schema":"p101-wrapper-audit-findings-v2"' "$work/audit.json"
+grep -q '"schema":"p101-tool-report-v1"' "$work/audit.json"
+grep -q '"tool":"audit-wrappers"' "$work/audit.json"
+grep -q '"does_not_prove":' "$work/audit.json"
+grep -q '"schema":"p101-tool-diagnostic-v1"' "$work/audit.json"
+grep -q '"message":"missed-wrapper: malloc -> p101_malloc"' "$work/audit.json"
+grep -q '"path":"lessons/wrapper-boundaries.md"' "$work/audit.json"
+grep -q '"outcome":"findings","exit_status":1' "$work/audit.json"
+
+set +e
+"$audit" -d:human,json "$work" >"$work/audit-both.json" 2>"$work/audit-both.txt"
+status=$?
+set -e
+[ "$status" -eq 1 ]
+grep -q '"message":"missed-wrapper: malloc -> p101_malloc"' "$work/audit-both.json"
+grep -q ': error: missed-wrapper: malloc -> p101_malloc' "$work/audit-both.txt"
 
 set +e
 "$audit" "${semantic_allows[@]}" "$work" >"$work/external.txt" 2>"$work/external.err"
 status=$?
 set -e
 [ "$status" -eq 0 ]
-grep -q 'external_calls: 1' "$work/external.txt"
+grep -q 'external_calls=1' "$work/external.txt"
 
 set +e
 "$audit" --strict-external "${semantic_allows[@]}" "$work" >"$work/strict.txt" 2>"$work/strict.err"
@@ -279,7 +305,7 @@ grep -q '"function":"p101_malloc".*"public":true.*"has_env":true.*"trace_entry":
 grep -q '"schema":"p101-mutation-candidates-v2"' "$work/mutations.json"
 
 set +e
-"$audit" --keep-going --json --cflag=-x --cflag=not-a-language "$work/src/alpha/main.c" \
+"$audit" --keep-going -d:json --cflag=-x --cflag=not-a-language "$work/src/alpha/main.c" \
     >"$work/parse-failure.json" 2>"$work/parse-failure.err"
 status=$?
 set -e

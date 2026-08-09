@@ -8,8 +8,8 @@ if [ -f "$root/.last-build-dir" ]; then
 fi
 for candidate in "$build_dir" build-clang build-clang-22 build; do
     [ -n "$candidate" ] || continue
-    if [ -x "$root/$candidate/p101-c-facts" ]; then
-        exec "$root/$candidate/p101-c-facts" "$@"
+    if [ -x "$root/$candidate/audit-facts" ]; then
+        exec "$root/$candidate/audit-facts" "$@"
     fi
 done
 # The acceptance preflight removes generated build trees on exit, so the
@@ -17,7 +17,7 @@ done
 # checkout. Name the directory: the caller is usually a generator running
 # from somewhere else in the workspace, and "run ./build.sh" alone does not
 # say where.
-printf 'p101-c-facts: native executable not built.\n' >&2
+printf 'audit-facts: native executable not built.\n' >&2
 printf 'Build it with:\n' >&2
 printf '    cd %s\n' "$root" >&2
 printf '    ./change-compiler.sh -c clang\n' >&2

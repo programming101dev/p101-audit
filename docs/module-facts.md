@@ -1,6 +1,6 @@
 # p101 module facts
 
-`p101-wrapper-audit --emit-module-facts` emits a plain tab-separated stream for
+`audit-wrappers --emit-module-facts` emits a plain tab-separated stream for
 tools that need C project facts without owning a C parser.
 
 The canonical parser and record constants live in `lib_c_facts`. Keep this
@@ -34,8 +34,8 @@ are escaped as `\\`, `\t`, `\n`, and `\r`.
 
 ## Ownership rule
 
-`p101-wrapper-audit` owns the C/C++ parsing pass. `lib_c_facts` owns the stable
-record contract and parser. Consumers such as `p101-module-map` should consume
+`audit-wrappers` owns the C/C++ parsing pass. `lib_c_facts` owns the stable
+record contract and parser. Consumers such as `audit-modules` should consume
 this fact stream through `lib_c_facts` instead of scanning C syntax themselves.
 If another tool needs more C facts, extend this format at the producer and keep
 the consumer simple.
@@ -66,7 +66,7 @@ note text. Kinds are appended so an existing numeric value never changes, which
 is why consumers keep working across additions and why the content-addressed
 caches do not have to re-key.
 
-The idiom notes consumed by `p101-module-map` are:
+The idiom notes consumed by `audit-modules` are:
 
 | Note | Symbol field | Rule |
 | --- | --- | --- |
@@ -98,5 +98,5 @@ shared representation, so the note is evidence about structure, not a defect
 signal. Consume it accordingly.
 
 Older versions are no longer accepted. The call flags and caller identity let
-`p101-error-contract` analyze every p101 function consistently and enforce
+`audit-errors` analyze every p101 function consistently and enforce
 caller-sensitive rules without a hard-coded name list.

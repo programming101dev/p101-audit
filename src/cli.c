@@ -4,6 +4,7 @@
 #include <p101_c_facts/facts.h>
 #include <p101_c_facts/project.h>
 #include <p101_record/record.h>
+#include <p101_tool_event/report.h>
 
 enum
 {
@@ -40,7 +41,7 @@ void p101_wrapper_usage(const struct p101_env *env, struct p101_error *err, cons
     p101_fputs(env, err, "  --keep-going            report incomplete parsing instead of stopping\n", stderr);
     if(!facts_only)
     {
-        p101_fputs(env, err, "  -j, --json              emit JSON findings\n", stderr);
+        p101_fputs(env, err, "  -d:FORMAT               diagnostics: human, json, or human,json\n", stderr);
         p101_fputs(env, err, "  -e, --strict-external   fail for external and indirect calls\n", stderr);
         p101_fputs(env, err, "  --allow-usr USR         allow an exact external declaration identity\n", stderr);
         p101_fputs(env, err, "  --allow-file FILE       read TSV path/caller-USR/callee-USR rules\n", stderr);
@@ -186,8 +187,6 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
 {
     int  p101_expression_result_18;
     int  p101_call_result_20;
-    int  p101_expression_result_21;
-    int  p101_call_result_23;
     int  p101_expression_result_24;
     int  p101_call_result_25;
     int  p101_call_result_26;
@@ -235,12 +234,12 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
 
     P101_TRACE_SCOPE(env);
     p101_memset(env, arguments, 0, sizeof(*arguments));
-    valid = true;
+    arguments->human = true;
+    valid            = true;
     for(index = 1; index < argc && valid; index++)
     {
         const char *argument;
         int         p101_call_result_19;
-        int         p101_call_result_22;
 
         argument            = argv[index];
         p101_call_result_19 = p101_strcmp(env, argument, "-h");
@@ -265,26 +264,23 @@ bool p101_wrapper_parse_arguments(const struct p101_env *env, struct p101_error 
             valid = false;
             break;
         }
-        p101_call_result_22 = p101_strcmp(env, argument, "-j");
-        if(p101_call_result_22 == 0)
+        if(argument[0] == '-' && argument[1] == 'd' && argument[2] == ':')
         {
-            p101_expression_result_21 = 1;
-        }
-        else
-        {
-            p101_call_result_23 = p101_strcmp(env, argument, "--json");
-            if(p101_call_result_23 == 0)
+            unsigned int outputs;
+            int          parse_status;
+
+            outputs      = 0U;
+            parse_status = p101_tool_report_parse_output_option(argument, &outputs);
+            if(parse_status != 0)
             {
-                p101_expression_result_21 = 1;
+                P101_ERROR_RAISE_USER(err, "Diagnostic output must be human, json, or human,json.", 1);
+                valid = false;
             }
             else
             {
-                p101_expression_result_21 = 0;
+                arguments->human = (outputs & P101_TOOL_DIAGNOSTIC_OUTPUT_HUMAN) != 0U;
+                arguments->json  = (outputs & P101_TOOL_DIAGNOSTIC_OUTPUT_JSON) != 0U;
             }
-        }
-        if(p101_expression_result_21)
-        {
-            arguments->json = true;
         }
         else
         {

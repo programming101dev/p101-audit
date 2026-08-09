@@ -1,6 +1,6 @@
-set(PROJECT_NAME "p101-wrapper-audit")
-set(PROJECT_VERSION "2.0.0")
-set(PROJECT_DESCRIPTION "Programming 101 native wrapper-boundary and C-fact auditor")
+set(PROJECT_NAME "p101-audit")
+set(PROJECT_VERSION "3.0.0")
+set(PROJECT_DESCRIPTION "Programming 101 semantic audit engines")
 set(PROJECT_LANGUAGE "C")
 
 set(CMAKE_C_STANDARD 17)
@@ -16,12 +16,15 @@ set(DARWIN_STANDARD_FLAGS -D_DARWIN_C_SOURCE)
 set(LINUX_STANDARD_FLAGS)
 set(BSD_STANDARD_FLAGS)
 
-set(EXECUTABLE_TARGETS wrapper_audit c_facts)
+set(EXECUTABLE_TARGETS audit_wrappers audit_facts audit_errors audit_modules audit_doctor)
 set(LIBRARY_TARGETS "")
-set(wrapper_audit_OUTPUT_NAME p101-wrapper-audit)
-set(c_facts_OUTPUT_NAME p101-c-facts)
+set(audit_wrappers_OUTPUT_NAME audit-wrappers)
+set(audit_facts_OUTPUT_NAME audit-facts)
+set(audit_errors_OUTPUT_NAME audit-errors)
+set(audit_modules_OUTPUT_NAME audit-modules)
+set(audit_doctor_OUTPUT_NAME audit-doctor)
 
-set(wrapper_audit_SOURCES
+set(audit_wrappers_SOURCES
         src/artifacts.c
         src/cli.c
         src/inventory.c
@@ -31,7 +34,7 @@ set(wrapper_audit_SOURCES
         src/model.c
         src/output.c
 )
-set(c_facts_SOURCES
+set(audit_facts_SOURCES
         src/artifacts.c
         src/cli.c
         src/facts_main.c
@@ -41,25 +44,82 @@ set(c_facts_SOURCES
         src/model.c
         src/output.c
 )
-set(wrapper_audit_HEADERS
+set(audit_errors_SOURCES
+        components/error-contract/src/cli.c
+        components/error-contract/src/contract.c
+        components/error-contract/src/contract_event.c
+        components/error-contract/src/contract_builder.c
+        components/error-contract/src/contract_model.c
+        components/error-contract/src/main.c
+        components/error-contract/src/native_analysis.c
+        components/error-contract/src/report.c
+)
+set(audit_modules_SOURCES
+        components/module-map/src/cli.c
+        components/module-map/src/fact_loader.c
+        components/module-map/src/idioms.c
+        components/module-map/src/idioms_includes.c
+        components/module-map/src/main.c
+        components/module-map/src/model_mutation.c
+        components/module-map/src/model_notes.c
+        components/module-map/src/model_query.c
+        components/module-map/src/native_analysis.c
+        components/module-map/src/report.c
+        components/module-map/src/runner.c
+        components/module-map/src/strings.c
+)
+set(audit_doctor_SOURCES
+        components/doctor/src/cli.c
+        components/doctor/src/main.c
+        components/doctor/src/paths.c
+        components/doctor/src/report.c
+        components/doctor/src/runner.c
+        components/doctor/src/source_inputs.c
+        components/doctor/src/status.c
+)
+
+set(audit_wrappers_HEADERS
         include/model.h
         include/output.h
         include/cli.h
 )
-set(c_facts_HEADERS
+set(audit_facts_HEADERS
         include/model.h
         include/output.h
         include/cli.h
 )
+file(GLOB audit_errors_HEADERS CONFIGURE_DEPENDS components/error-contract/include/*.h)
+file(GLOB audit_modules_HEADERS CONFIGURE_DEPENDS components/module-map/include/*.h)
+file(GLOB audit_doctor_HEADERS CONFIGURE_DEPENDS components/doctor/include/*.h)
 
 set(P101_WRAPPER_AUDIT_LIBRARIES
         p101_error
         p101_env
         p101_record
+        p101_tool_event
         p101_c
         p101_c_facts
         p101_filesystem
         p101_io
 )
-set(wrapper_audit_LINK_LIBRARIES ${P101_WRAPPER_AUDIT_LIBRARIES})
-set(c_facts_LINK_LIBRARIES ${P101_WRAPPER_AUDIT_LIBRARIES})
+set(audit_wrappers_LINK_LIBRARIES ${P101_WRAPPER_AUDIT_LIBRARIES})
+set(audit_facts_LINK_LIBRARIES ${P101_WRAPPER_AUDIT_LIBRARIES})
+
+set(P101_AUDIT_POLICY_LIBRARIES
+        p101_error
+        p101_env
+        p101_record
+        p101_tool_event
+        p101_c
+        p101_c_facts
+        p101_cli
+        p101_filesystem
+        p101_io
+        p101_process
+        p101_convert
+        p101_util
+        m
+)
+set(audit_errors_LINK_LIBRARIES ${P101_AUDIT_POLICY_LIBRARIES})
+set(audit_modules_LINK_LIBRARIES ${P101_AUDIT_POLICY_LIBRARIES})
+set(audit_doctor_LINK_LIBRARIES ${P101_AUDIT_POLICY_LIBRARIES})

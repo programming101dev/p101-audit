@@ -264,3 +264,29 @@ if [ "$coverage" -eq 1 ]; then
 fi
 echo ">> building tests"; cmake --build "$test_bd"
 echo ">> ctest"; ( cd "$test_bd" && ctest --output-on-failure ${ctest_args[@]+"${ctest_args[@]}"} )
+
+run_component_tests() {
+  local component="$1"
+  local component_name="${component##*/}"
+  local component_test_bd="$component/test/build-$sfx"
+
+  if [ "$coverage" -eq 1 ]; then
+    rm -rf "$component_test_bd"
+  fi
+  echo ">> configuring $component_name tests ($component_test_bd)"
+  cmake -S "$component/test" -B "$component_test_bd" "$compflag" \
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON "$compile_flag_arg" \
+    ${sanitizer_args[@]+"${sanitizer_args[@]}"} \
+    ${p101_path_args[@]+"${p101_path_args[@]}"} "$cov_arg" >/dev/null
+  if [ "$coverage" -eq 1 ]; then
+    find "$component_test_bd" -type f -name '*.gcda' -exec rm -f {} +
+  fi
+  echo ">> building $component_name tests"
+  cmake --build "$component_test_bd"
+  echo ">> ctest: $component_name"
+  ( cd "$component_test_bd" && ctest --output-on-failure ${ctest_args[@]+"${ctest_args[@]}"} )
+}
+
+run_component_tests components/error-contract
+run_component_tests components/module-map
+run_component_tests components/doctor

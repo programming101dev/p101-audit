@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(CDPATH='' cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+build_dir=""
+if [ -f "$root/.last-build-dir" ]; then
+    build_dir="$(cat "$root/.last-build-dir")"
+fi
+for candidate in "$build_dir" build-clang build-clang-22 build; do
+    [ -n "$candidate" ] || continue
+    if [ -x "$root/$candidate/audit-wrappers" ]; then
+        exec "$root/$candidate/audit-wrappers" "$@"
+    fi
+done
+echo "audit-wrappers: native executable not built; run ./change-compiler.sh and ./build.sh" >&2
+exit 2

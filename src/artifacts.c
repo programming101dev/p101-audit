@@ -585,7 +585,7 @@ static bool write_instrumentation(const struct p101_env *env, struct p101_error 
         goto done;
     }
     collect_capabilities(env, model, capabilities);
-    p101_fputs(env, err, "{\"schema\":\"p101-instrumentation-coverage-v1\",\"producer\":\"p101-wrapper-audit\",\"functions\":[", stream);
+    p101_fputs(env, err, "{\"schema\":\"p101-instrumentation-coverage-v1\",\"producer\":\"audit-wrappers\",\"functions\":[", stream);
     first = true;
     for(index = 0U; index < model->fact_count; index++)
     {

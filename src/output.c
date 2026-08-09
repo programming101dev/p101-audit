@@ -4,12 +4,21 @@
 #include <p101_c/p101_string.h>
 #include <p101_c_facts/facts.h>
 #include <p101_record/record.h>
+#include <p101_tool_event/diagnostic.h>
+#include <p101_tool_event/report.h>
 
-static void        tsv_string(const struct p101_env *env, struct p101_error *err, FILE *stream, const char *text);
-static void        module_name(const struct p101_env *env, const char *path, char *module, size_t size);
-static const char *finding_id(enum p101_wrapper_finding_kind kind);
-static const char *finding_label(enum p101_wrapper_finding_kind kind);
-static const char *bool_text(bool value);
+enum
+{
+    FINDING_MESSAGE_EXTRA_SIZE = 64U
+};
+
+static void              tsv_string(const struct p101_env *env, struct p101_error *err, FILE *stream, const char *text);
+static void              module_name(const struct p101_env *env, const char *path, char *module, size_t size);
+static p101_tool_finding finding_rule(enum p101_wrapper_finding_kind kind);
+static const char       *finding_label(enum p101_wrapper_finding_kind kind);
+static const char       *bool_text(bool value);
+static void              format_finding_message(const struct p101_env *env, struct p101_error *err, const struct p101_wrapper_finding *finding, char *message, size_t message_size);
+static void              report_check(const struct p101_env *env, struct p101_error *err, int status);
 
 void p101_wrapper_output_json_string(const struct p101_env *env, struct p101_error *err, FILE *stream, const char *text)
 {
@@ -121,20 +130,20 @@ static void module_name(const struct p101_env *env, const char *path, char *modu
     }
 }
 
-static const char *finding_id(enum p101_wrapper_finding_kind kind)
+static p101_tool_finding finding_rule(enum p101_wrapper_finding_kind kind)
 {
-    static const char *const ids[] = {"P101-WRAP-001", "P101-WRAP-002", "P101-WRAP-003", "P101-WRAP-004"};
-    const char              *id;
+    static const p101_tool_finding rules[] = {P101_TOOL_FINDING_WRAP_001, P101_TOOL_FINDING_WRAP_002, P101_TOOL_FINDING_WRAP_003, P101_TOOL_FINDING_WRAP_004};
+    p101_tool_finding              rule;
 
     if(kind < P101_WRAPPER_MISSED || kind > P101_WRAPPER_PORTABILITY)
     {
-        id = "P101-WRAP-000";
+        rule = P101_TOOL_FINDING_COUNT;
     }
     else
     {
-        id = ids[kind];
+        rule = rules[kind];
     }
-    return id;
+    return rule;
 }
 
 static const char *finding_label(enum p101_wrapper_finding_kind kind)
@@ -166,6 +175,40 @@ static const char *bool_text(bool value)
         text = "0";
     }
     return text;
+}
+
+static void report_check(const struct p101_env *env, struct p101_error *err, int status)
+{
+    P101_TRACE_SCOPE(env);
+    if(status != 0)
+    {
+        P101_ERROR_RAISE_ERRNO(err, errno == 0 ? EIO : errno);
+    }
+}
+
+static void format_finding_message(const struct p101_env *env, struct p101_error *err, const struct p101_wrapper_finding *finding, char *message, size_t message_size)
+{
+    const char *label;
+    int         written;
+
+    P101_TRACE_SCOPE(env);
+    label = finding_label(finding->kind);
+    if(finding->replacement[0] != '\0')
+    {
+        written = p101_snprintf(env, err, message, message_size, "%s: %s -> %s", label, finding->name, finding->replacement);
+    }
+    else if(finding->allow_identity[0] != '\0')
+    {
+        written = p101_snprintf(env, err, message, message_size, "%s: %s; allow-rule identity %s", label, finding->name, finding->allow_identity);
+    }
+    else
+    {
+        written = p101_snprintf(env, err, message, message_size, "%s: %s", label, finding->name);
+    }
+    if(written < 0 || (size_t)written >= message_size)
+    {
+        P101_ERROR_RAISE_ERRNO(err, EOVERFLOW);
+    }
 }
 
 const char *p101_wrapper_output_json_bool_text(bool value)
@@ -223,142 +266,78 @@ void p101_wrapper_write_inventory(const struct p101_env *env, struct p101_error 
 
 void p101_wrapper_write_audit(const struct p101_env *env, struct p101_error *err, const struct p101_wrapper_model *model, const struct p101_wrapper_arguments *arguments)
 {
-    const char *p101_call_result_2;
-    const char *p101_call_result_3;
-    const char *p101_call_result_4;
-    const char *p101_call_result_5;
-    const char *p101_call_result_6;
-    size_t      counts[4] = {0U, 0U, 0U, 0U};
-    size_t      index;
+    const struct p101_tool_report_options options    = {"audit-wrappers",
+                                                        "Clang AST facts and the wrapper inventory for the selected translation units.",
+                                                        "Calls hidden from Clang, unscanned translation units, and third-party implementation details are outside this report.",
+                                                        0U,
+                                                        true};
+    struct p101_tool_report_counter       counters[] = {
+        {"missed_wrappers",      0U},
+        {"external_calls",       0U},
+        {"indirect_calls",       0U},
+        {"portability_includes", 0U},
+        {"parse_failures",       0U}
+    };
+    struct p101_tool_report         report;
+    struct p101_tool_report_options selected_options;
+    p101_tool_outcome               outcome;
+    size_t                          index;
+    int                             exit_status;
+    int                             report_status;
 
     P101_TRACE_SCOPE(env);
+    selected_options         = options;
+    selected_options.outputs = 0U;
+    if(arguments->human)
+    {
+        selected_options.outputs |= P101_TOOL_DIAGNOSTIC_OUTPUT_HUMAN;
+    }
+    if(arguments->json)
+    {
+        selected_options.outputs |= P101_TOOL_DIAGNOSTIC_OUTPUT_JSON;
+    }
+    report_status = p101_tool_report_begin(&report, stdout, stderr, &selected_options);
+    report_check(env, err, report_status);
+    if(report_status != 0)
+    {
+        goto done;
+    }
     for(index = 0U; index < model->finding_count; index++)
     {
         if(model->findings[index].kind >= P101_WRAPPER_MISSED && model->findings[index].kind <= P101_WRAPPER_PORTABILITY)
         {
-            counts[model->findings[index].kind]++;
+            counters[model->findings[index].kind].value++;
         }
-    }
-    if(arguments->json)
-    {
-        bool first;
-
-        p101_fprintf(env,
-                     err,
-                     stdout,
-                     "{\"schema\":\"p101-wrapper-audit-findings-v2\",\"missed_wrappers\":%zu,\"external_calls\":%zu,\"indirect_calls\":%zu,\"portability_includes\":%zu,\"parse_failures\":%zu,\"findings\":[",
-                     counts[P101_WRAPPER_MISSED],
-                     counts[P101_WRAPPER_EXTERNAL],
-                     counts[P101_WRAPPER_INDIRECT],
-                     counts[P101_WRAPPER_PORTABILITY],
-                     model->parse_failures);
-        first = true;
-        for(index = 0U; index < model->finding_count; index++)
         {
             const struct p101_wrapper_finding *finding;
+            p101_tool_finding                  rule;
+            struct p101_tool_diagnostic        diagnostic;
+            char                               message[(P101_WRAPPER_NAME_SIZE * 3U) + FINDING_MESSAGE_EXTRA_SIZE];
+            p101_tool_diagnostic_severity      severity;
 
             finding = &model->findings[index];
-            if(!first)
-            {
-                p101_fputc(env, err, ',', stdout);
-            }
-            first = false;
-            p101_fputs(env, err, "{\"id\":", stdout);
-            p101_call_result_2 = finding_id(finding->kind);
-            p101_wrapper_output_json_string(env, err, stdout, p101_call_result_2);
-            p101_fputs(env, err, ",\"severity\":", stdout);
+            rule    = finding_rule(finding->kind);
+            format_finding_message(env, err, finding, message, sizeof(message));
             if(finding->kind == P101_WRAPPER_EXTERNAL || finding->kind == P101_WRAPPER_INDIRECT)
             {
-                p101_wrapper_output_json_string(env, err, stdout, "note");
+                severity = P101_TOOL_DIAGNOSTIC_NOTE;
             }
             else
             {
-                p101_wrapper_output_json_string(env, err, stdout, "error");
+                severity = P101_TOOL_DIAGNOSTIC_ERROR;
             }
-            p101_fputs(env, err, ",\"location\":{\"path\":", stdout);
-            p101_wrapper_output_json_string(env, err, stdout, finding->path);
-            p101_fprintf(env, err, stdout, ",\"line\":%zu,\"column\":%zu,\"function\":", finding->line, finding->column);
-            p101_wrapper_output_json_string(env, err, stdout, finding->caller);
-            p101_fputs(env, err, "},\"message\":", stdout);
-            p101_call_result_3 = finding_label(finding->kind);
-            p101_wrapper_output_json_string(env, err, stdout, p101_call_result_3);
-            p101_fputs(env, err, ",\"evidence\":{\"parser\":\"libclang\",\"kind\":", stdout);
-            p101_call_result_4 = finding_label(finding->kind);
-            p101_wrapper_output_json_string(env, err, stdout, p101_call_result_4);
-            p101_fputs(env, err, ",\"callee\":", stdout);
-            p101_wrapper_output_json_string(env, err, stdout, finding->name);
-            p101_fputs(env, err, ",\"replacement\":", stdout);
-            p101_wrapper_output_json_string(env, err, stdout, finding->replacement);
-            p101_fputs(env, err, "}}", stdout);
-        }
-        for(index = 0U; index < model->fact_count; index++)
-        {
-            const struct p101_wrapper_fact *fact;
-
-            fact = &model->facts[index];
-            if(fact->kind != P101_C_ANALYSIS_DIAGNOSTIC)
+            report_status = p101_tool_diagnostic_initialize(&diagnostic, rule, severity, finding->path, finding->line, finding->column, finding->caller, message);
+            report_check(env, err, report_status);
+            if(report_status != 0)
             {
-                continue;
+                goto done;
             }
-            if(!first)
+            report_status = p101_tool_report_emit(&report, &diagnostic);
+            report_check(env, err, report_status);
+            if(report_status != 0)
             {
-                p101_fputc(env, err, ',', stdout);
+                goto done;
             }
-            first = false;
-            p101_fputs(env, err, "{\"id\":\"P101-WRAP-900\",\"severity\":\"error\",\"location\":{\"path\":", stdout);
-            p101_wrapper_output_json_string(env, err, stdout, fact->path);
-            p101_fprintf(env, err, stdout, ",\"line\":%zu,\"column\":%zu,\"function\":\"?\"},\"message\":", fact->line, fact->column);
-            p101_wrapper_output_json_string(env, err, stdout, fact->name);
-            p101_fputs(env, err, ",\"evidence\":{\"parser\":\"libclang\",\"kind\":\"parse-failure\"}}", stdout);
-        }
-        p101_fputs(env, err, "]}\n", stdout);
-        goto done;
-    }
-
-    p101_fputs(env, err, "p101-wrapper-audit summary\n", stdout);
-    p101_fprintf(env,
-                 err,
-                 stdout,
-                 "missed_wrappers: %zu\nexternal_calls: %zu\nindirect_calls: %zu\nportability_includes: %zu\nparse_failures: %zu\n",
-                 counts[P101_WRAPPER_MISSED],
-                 counts[P101_WRAPPER_EXTERNAL],
-                 counts[P101_WRAPPER_INDIRECT],
-                 counts[P101_WRAPPER_PORTABILITY],
-                 model->parse_failures);
-    for(index = 0U; index < model->finding_count; index++)
-    {
-        const struct p101_wrapper_finding *finding;
-
-        finding            = &model->findings[index];
-        p101_call_result_5 = finding_id(finding->kind);
-        p101_call_result_6 = finding_label(finding->kind);
-        p101_fprintf(env, err, stdout, "%s:%zu:%zu: %s: %s: %s", finding->path, finding->line, finding->column, p101_call_result_5, p101_call_result_6, finding->name);
-        if(finding->replacement[0] != '\0')
-        {
-            p101_fprintf(env, err, stdout, " -> %s", finding->replacement);
-        }
-        p101_fprintf(env, err, stdout, " [%s]", finding->caller);
-        /* Published last so the line stays byte-identical up to this suffix. */
-        if(finding->allow_identity[0] != '\0')
-        {
-            p101_fprintf(env, err, stdout, "  (allow-rule callee: %s)", finding->allow_identity);
-        }
-        p101_fputc(env, err, '\n', stdout);
-        if(finding->kind == P101_WRAPPER_MISSED)
-        {
-            p101_fprintf(env, err, stdout, "  hint: use %s(env, err, ...) instead of raw %s(...) when the surrounding code is p101-aware\n", finding->replacement, finding->name);
-        }
-        else if(finding->kind == P101_WRAPPER_INDIRECT)
-        {
-            p101_fputs(env, err, "  hint: indirect/non-p101 call; document this runtime boundary\n", stdout);
-        }
-        else if(finding->kind == P101_WRAPPER_PORTABILITY)
-        {
-            p101_fputs(env, err, "  hint: isolate this platform header behind a portable boundary\n", stdout);
-        }
-        else
-        {
-            p101_fputs(env, err, "  hint: allow it explicitly, wrap it, or keep it at a documented boundary\n", stdout);
         }
     }
     for(index = 0U; index < model->fact_count; index++)
@@ -368,9 +347,39 @@ void p101_wrapper_write_audit(const struct p101_env *env, struct p101_error *err
         fact = &model->facts[index];
         if(fact->kind == P101_C_ANALYSIS_DIAGNOSTIC)
         {
-            p101_fprintf(env, err, stdout, "%s:%zu:%zu: P101-WRAP-900: parse-failure: %s [?]\n", fact->path, fact->line, fact->column, fact->name);
+            struct p101_tool_diagnostic diagnostic;
+
+            report_status = p101_tool_diagnostic_initialize(&diagnostic, P101_TOOL_FINDING_WRAP_900, P101_TOOL_DIAGNOSTIC_ERROR, fact->path, fact->line, fact->column, "?", fact->name);
+            report_check(env, err, report_status);
+            if(report_status != 0)
+            {
+                goto done;
+            }
+            report_status = p101_tool_report_emit(&report, &diagnostic);
+            report_check(env, err, report_status);
+            if(report_status != 0)
+            {
+                goto done;
+            }
         }
     }
+    counters[4].value = model->parse_failures;
+    outcome           = P101_TOOL_OUTCOME_CLEAN;
+    if(model->parse_failures > 0U)
+    {
+        outcome = P101_TOOL_OUTCOME_TOOL_ERROR;
+    }
+    for(index = 0U; index < model->finding_count && outcome == P101_TOOL_OUTCOME_CLEAN; index++)
+    {
+        if(model->findings[index].kind == P101_WRAPPER_MISSED || model->findings[index].kind == P101_WRAPPER_PORTABILITY ||
+           (arguments->strict_external && (model->findings[index].kind == P101_WRAPPER_EXTERNAL || model->findings[index].kind == P101_WRAPPER_INDIRECT)))
+        {
+            outcome = P101_TOOL_OUTCOME_FINDINGS;
+        }
+    }
+    exit_status   = p101_tool_outcome_exit_status(outcome);
+    report_status = p101_tool_report_end(&report, outcome, exit_status, counters, sizeof(counters) / sizeof(counters[0]));
+    report_check(env, err, report_status);
 
 done:
     return;

@@ -8,9 +8,10 @@ if [ -f "$root/.last-build-dir" ]; then
 fi
 for candidate in "$build_dir" build-clang build-clang-22 build; do
     [ -n "$candidate" ] || continue
-    if [ -x "$root/$candidate/p101-wrapper-audit" ]; then
-        exec "$root/$candidate/p101-wrapper-audit" "$@"
+    if [ -x "$root/$candidate/audit-errors" ]; then
+        exec "$root/$candidate/audit-errors" "$@"
     fi
 done
-echo "p101-wrapper-audit: native executable not built; run ./change-compiler.sh and ./build.sh" >&2
+echo "audit-errors: native executable not built; run ./change-compiler.sh and ./build.sh" >&2
 exit 2
+

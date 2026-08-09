@@ -1,154 +1,35 @@
-# p101-wrapper-audit
+# p101-audit
 
-`p101-wrapper-audit` finds calls that cross outside the local/p101 wrapper
-boundary.
+`p101-audit` is the workspace's semantic source-policy category. It combines
+the former wrapper audit, error-contract, module-map, and doctor repositories
+without combining their judgments into one opaque pass.
 
-It is a native C program built on `lib_c_facts` and libclang, not a token
-scanner or a Python/AST-JSON adapter:
+## Internal engines
 
-1. inventory wrapped functions from installed/local `p101_*` headers;
-2. parse source translation units directly with libclang;
-3. collect functions defined inside the audited roots;
-4. report calls to functions that are neither local nor `p101_*`, plus
-   indirect function-pointer calls where the static target cannot be proven.
+- `audit-facts`: acquire a reusable P101FACT snapshot through `lib_c_facts`.
+- `audit-wrappers`: check wrapper boundaries and wrapper form.
+- `audit-errors`: check error/environment ownership and control flow.
+- `audit-modules`: check module shape, public surface, and dependency direction.
+- `audit-doctor`: compose the source engines with an executable preflight.
 
-Known wrapped functions are reported as `missed-wrapper` findings and make the
-tool exit `1`. Each finding includes a replacement hint such as
-`open -> p101_open`. Other external calls are reported as inventory and only
-fail with `--strict-external`. Indirect calls are reported separately because
-they are audit boundaries rather than proof of a specific missed wrapper.
+Run an engine from the configured build directory, or use the checked-in
+`audit-facts`, `audit-wrappers`, `audit-errors`, `audit-modules`, and
+`audit-doctor` launchers. Detailed engine contracts live under
+`components/*/README.md`.
 
-## Usage
+## Contract
 
-```sh
-p101-wrapper-audit [options] [path...]
-```
+Admitted inputs are explicit source paths, compile databases, fact snapshots,
+and boundary ledgers. Outputs are facts, findings, reports, and exit status.
+The engines cannot see omitted source, unsupported language constructs, or
+runtime behavior. `lib_c_facts` owns parsing; these engines own policy. Finding
+engines use the shared `p101-tool-report-v1` lifecycle and accept
+`-d:human`, `-d:json`, or `-d:human,json`; there is no separate JSON alias.
 
-Options:
-
-- `-j`, `--json` emits JSON.
-- `-e`, `--strict-external` makes unmapped external and indirect calls fail too.
-- `--allow-usr USR` allows one exact external declaration identity.
-- `--compile-db compile_commands.json` uses a specific compile database.
-- `--compile-db-only` audits only active translation units in that database.
-- `--active-headers-only` derives header facts from those active translation
-  units instead of parsing every header as an independent translation unit.
-  Workspace-wide consumer audits use this mode so a C++ header is interpreted
-  under the C++ command that actually includes it.
-  This is useful for portable projects that retain platform-specific source
-  files which are intentionally not built on the current host.
-- `--allow-file FILE` reads intentional boundary rules as tab-separated
-  `path`, optional `caller_usr`, and required `callee_usr` columns. Paths use
-  glob matching because filesystem paths are textual identifiers. Caller and
-  callee identities are compared exactly; they come from libclang rather than
-  source spellings. Blank lines and `#` comments are ignored, and an unused
-  rule is tool trouble. Keep this file in the audited repo so every exception
-  remains scoped and stale exceptions are removed.
-- `--cflag FLAG` adds a compiler flag for files not present in a compile
-  database; may be repeated.
-- `--header-root PATH` trusts public function declarations under an explicitly
-  admitted header file or directory and also consumes `p101:wrapper` and
-  `p101:wrapper-of:<callee-usr>` semantic roles. Admission uses AST declaration
-  identity and source location; spelling a function `p101_*` is not evidence.
-- `--keep-going` continues after translation-unit parse failures, reports the
-  skipped files, and still exits non-clean so incomplete audits cannot pass
-  silently.
-- `--show-inventory` prints the reviewed native/wrapper names and AST
-  identities. Workspace mappings come from the semantic columns in each
-  `api-manifest.tsv`; the tool never derives a native API by trimming a name.
-  A `-` in both native-identity columns explicitly means that the public API
-  has no direct native counterpart.
-- `--show-inventory-json` prints the same inventory as machine-readable JSON.
-- `--emit-module-facts` emits the Clang-derived TSV fact stream parsed by
-  `lib_c_facts` and consumed by `p101-module-map`; see
-  [docs/module-facts.md](docs/module-facts.md).
-- `--facts-output FILE` writes the same P101FACT v7 snapshot while the wrapper
-  audit runs, so later policy tools reuse the exact AST evidence.
-- `--input-manifest FILE` writes a JSON receipt containing the selected compile
-  database and modes, explicit paths, header roots, extra parser arguments,
-  boundary-rule files, parsed translation units, inventory/rule/fact counts,
-  and parse failures. It records admitted inputs; it does not pretend to be a
-  content-addressed source archive.
-- `--instrumentation-output FILE` writes
-  `p101-instrumentation-coverage-v1`: one record per public or private
-  `p101_*` definition with its env/error contract and tracing, fault-injection,
-  descriptor, allocation, and generic-resource capabilities. Capabilities
-  supplied by same-file helpers are propagated to their callers.
-- `--mutation-candidates-output FILE` writes exact libclang source ranges and
-  replacements using `p101-mutation-candidates-v2`.
-- `--check-portability-includes` rejects known OS-specific headers such as
-  `linux/*`, `mach/*`, and `sys/event.h`. This source-boundary policy lives
-  here rather than in the structural module mapper because it is a judgment
-  about the headers admitted at the portable wrapper boundary.
-
-Examples:
+## Evidence
 
 ```sh
-./p101-wrapper-audit ../simple-port-forwarder/src
-./p101-wrapper-audit -j --compile-db ../simple-port-forwarder/build-clang/compile_commands.json ../simple-port-forwarder
-./p101-wrapper-audit --cflag=-Iinclude src
-./p101-wrapper-audit --keep-going --cflag=-Iinclude src
-./p101-wrapper-audit --emit-module-facts --cflag=-Iinclude src include
-./p101-wrapper-audit --facts-output facts.tsv --input-manifest inputs.json src include
-./p101-wrapper-audit --check-portability-includes --compile-db build/compile_commands.json .
-./p101-wrapper-audit -e -a TEST_ASSERT_EQUAL_INT test src
+./change-compiler.sh -c clang
+./build.sh
+./test.sh
 ```
-
-The wrapper inventory is part of the trust boundary. A normal audit fails as a
-setup error if no p101 wrappers can be inventoried, because an empty inventory
-would otherwise make direct calls look harmless.
-
-## Fact-production boundary
-
-`p101-c-facts` is the dedicated native fact-producing command in this
-repository. It calls `lib_c_facts` directly, accepts the same source-discovery,
-compile-database, compiler-argument, and keep-going options, and emits only the
-`P101FACT` stream. It is a deliberately thin front end over the same libclang
-acquisition pipeline, not a subprocess alias for the wrapper-policy command.
-
-`p101-wrapper-audit` remains able to write a fact snapshot during its policy
-pass with `--facts-output`; `p101-doctor` uses that path to avoid parsing every
-translation unit twice. The split is one of responsibility and interface, not
-duplicated parsing code.
-
-## Trust boundary and blind spots
-
-This tool is a gate for the code it successfully parses. It is not a whole
-process instrumentation proof.
-
-It can see:
-
-- direct calls in translation units parsed by Clang;
-- calls hidden behind macros after preprocessing;
-- p101 wrapper functions inventoried from the configured p101 headers;
-- indirect calls as an explicit audit boundary.
-
-It cannot see:
-
-- source files that are not part of the compile database or path list;
-- translation units skipped after parser/tool errors;
-- behavior inside third-party libraries;
-- libc calls made by dependencies after your code calls them;
-- the runtime effect of function pointers whose target is only known at run
-  time.
-
-For teaching, that is the intended ceiling: the audit tells students whether
-their code follows the wrapper contract. Pair it with `p101-observe`,
-the canonical `p101 analyze` resource policy, and sanitizers for runtime behavior.
-
-## Exit status
-
-| Status | Meaning |
-| --- | --- |
-| `0` | no missed wrappers; external inventory may still be present |
-| `1` | missed wrappers, or external calls with `--strict-external` |
-| `2` | parser/tool/setup trouble |
-
-With `--keep-going`, parser trouble is reported alongside any findings found in
-the translation units that did parse. The exit status remains `2` when any unit
-was skipped, because the report is intentionally partial.
-
-JSON findings use the common envelope keys `id`, `severity`, `location`,
-`message`, and `evidence`. Wrapper IDs are `P101-WRAP-001` (available wrapper
-bypassed), `P101-WRAP-002` (external call), and `P101-WRAP-003` (indirect
-call). Parser trouble is `P101-WRAP-900`.

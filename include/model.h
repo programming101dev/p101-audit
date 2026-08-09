@@ -44,6 +44,7 @@ struct p101_wrapper_arguments
     const char *input_manifest;
     const char *instrumentation_output;
     const char *mutation_output;
+    bool        human;
     bool        json;
     bool        strict_external;
     bool        compile_database_only;

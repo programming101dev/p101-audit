@@ -102,7 +102,7 @@ done:
     {
         /* P101_ERROR_OPTIONAL rationale: diagnostic output must not overwrite the reported failure. */
         p101_call_result_3 = p101_error_get_message(err);
-        p101_fprintf(env, P101_ERROR_OPTIONAL, stderr, "p101-c-facts: %s\n", p101_call_result_3);
+        p101_fprintf(env, P101_ERROR_OPTIONAL, stderr, "audit-facts: %s\n", p101_call_result_3);
         status = EXIT_TROUBLE;
     }
 }
