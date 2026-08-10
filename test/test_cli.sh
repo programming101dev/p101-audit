@@ -10,7 +10,6 @@ semantic_allows=(
     --allow-usr 'c:@F@p101_first'
     --allow-usr 'c:@F@p101_second'
     --allow-usr 'c:@F@p101_error_has_error'
-    --allow-usr 'c:@F@p101_error_optional'
 )
 trap 'rm -rf "$work"' EXIT
 
@@ -54,8 +53,8 @@ struct p101_error;
 int p101_first(const struct p101_env *, struct p101_error *);
 int p101_second(const struct p101_env *, struct p101_error *);
 int p101_error_has_error(const struct p101_error *) __attribute__((annotate("p101:error-state-query")));
-struct p101_error *p101_error_optional(void) __attribute__((annotate("p101:optional-error")));
-#define P101_ERROR_OPTIONAL p101_error_optional()
+extern struct p101_error *const p101_error_optional_sink __attribute__((annotate("p101:optional-error")));
+#define P101_ERROR_OPTIONAL p101_error_optional_sink
 int external_boundary(void);
 
 static int p101_traced(const struct p101_env *env)

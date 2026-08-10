@@ -29,14 +29,15 @@ bool p101_wrapper_is_wrapper_implementation(const struct p101_env *env, const st
         const char *lowered_usr;
         const char *wrapper_usr;
     } aliases[] = {
-        {"c:@F@fgetc",  "c:@F@p101_getc"    },
-        {"c:@F@fgetc",  "c:@F@p101_getchar" },
-        {"c:@F@fgetwc", "c:@F@p101_getwc"   },
-        {"c:@F@fgetwc", "c:@F@p101_getwchar"},
-        {"c:@F@fputc",  "c:@F@p101_putc"    },
-        {"c:@F@fputc",  "c:@F@p101_putchar" },
-        {"c:@F@fputwc", "c:@F@p101_putwc"   },
-        {"c:@F@fputwc", "c:@F@p101_putwchar"},
+        {"c:@F@__xpg_basename", "c:@F@p101_basename"},
+        {"c:@F@fgetc",          "c:@F@p101_getc"    },
+        {"c:@F@fgetc",          "c:@F@p101_getchar" },
+        {"c:@F@fgetwc",         "c:@F@p101_getwc"   },
+        {"c:@F@fgetwc",         "c:@F@p101_getwchar"},
+        {"c:@F@fputc",          "c:@F@p101_putc"    },
+        {"c:@F@fputc",          "c:@F@p101_putchar" },
+        {"c:@F@fputwc",         "c:@F@p101_putwc"   },
+        {"c:@F@fputwc",         "c:@F@p101_putwchar"},
     };
 
     size_t index;
