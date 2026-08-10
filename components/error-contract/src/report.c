@@ -21,7 +21,7 @@ void p101_error_contract_report_begin(const struct p101_env *env, struct p101_er
     {
         selected_options.human_summary = false;
     }
-    if(args->human || (!args->human && !args->json))
+    if(args->human || !args->json)
     {
         selected_options.outputs |= P101_TOOL_DIAGNOSTIC_OUTPUT_HUMAN;
     }

@@ -310,9 +310,7 @@ static int run_p101_wrapper_audit(const struct p101_env *env, struct p101_error 
 
 static int run_p101_module_map(const struct p101_env *env, struct p101_error *err, const struct arguments *args, const struct doctor_paths *paths)
 {
-    bool   p101_call_result_11;
     bool   p101_call_result_12;
-    bool   p101_call_result_13;
     char  *tool_argv[MAX_SOURCE_PATHS + MODULE_MAP_RESERVE];
     char   module_path[PATH_LEN];
     char   output_path[PATH_LEN];
@@ -349,8 +347,10 @@ static int run_p101_module_map(const struct p101_env *env, struct p101_error *er
     }
     else
     {
-        p101_call_result_11 = p101_doctor_resolve_compile_database(env, err, args, compile_db_path);
-        if(p101_call_result_11)
+        bool database_resolved;
+
+        database_resolved = p101_doctor_resolve_compile_database(env, err, args, compile_db_path);
+        if(database_resolved)
         {
             tool_argv[arg_index++] = compile_db_option;
             tool_argv[arg_index++] = compile_db_path;
@@ -363,12 +363,14 @@ static int run_p101_module_map(const struct p101_env *env, struct p101_error *er
     }
     else
     {
+        bool status_acceptable;
+
         arg_index            = p101_doctor_append_source_paths(tool_argv, arg_index, source_paths, args->source_count);
         tool_argv[arg_index] = NULL;
 
-        ret_val             = run_tool_capture(env, err, tool_argv, paths->module_stdout, paths->module_stderr);
-        p101_call_result_13 = p101_doctor_status_is_acceptable(ret_val);
-        if(p101_call_result_13)
+        ret_val           = run_tool_capture(env, err, tool_argv, paths->module_stdout, paths->module_stderr);
+        status_acceptable = p101_doctor_status_is_acceptable(ret_val);
+        if(status_acceptable)
         {
             int json_status;
 

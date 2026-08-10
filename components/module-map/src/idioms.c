@@ -70,7 +70,6 @@ bool p101_module_map_idiom_name_ends_with(const struct p101_env *env, const char
 {
     size_t name_length;
     size_t suffix_length;
-    int    p101_call_result_4;
     bool   ret_val;
 
     name_length   = p101_strlen(env, name);
@@ -78,8 +77,10 @@ bool p101_module_map_idiom_name_ends_with(const struct p101_env *env, const char
     ret_val       = false;
     if(name_length > suffix_length)
     {
-        p101_call_result_4 = p101_strcmp(env, name + (name_length - suffix_length), suffix);
-        if(p101_call_result_4 == 0)
+        int comparison;
+
+        comparison = p101_strcmp(env, name + (name_length - suffix_length), suffix);
+        if(comparison == 0)
         {
             ret_val = true;
         }
@@ -90,17 +91,18 @@ bool p101_module_map_idiom_name_ends_with(const struct p101_env *env, const char
 
 bool p101_module_map_idiom_swap_suffix(const struct p101_env *env, const char *name, const char *suffix, const char *replacement, char *peer, size_t peer_size)
 {
-    size_t name_length;
-    size_t suffix_length;
-    size_t replacement_length;
-    size_t stem_length;
-    bool   p101_call_result_5;
-    bool   ret_val;
+    bool p101_call_result_5;
+    bool ret_val;
 
     ret_val            = false;
     p101_call_result_5 = p101_module_map_idiom_name_ends_with(env, name, suffix);
     if(p101_call_result_5)
     {
+        size_t name_length;
+        size_t suffix_length;
+        size_t replacement_length;
+        size_t stem_length;
+
         name_length        = p101_strlen(env, name);
         suffix_length      = p101_strlen(env, suffix);
         replacement_length = p101_strlen(env, replacement);
@@ -124,7 +126,6 @@ bool p101_module_map_idiom_module_shares_prefix(const struct p101_env *env, cons
     size_t      public_count;
     int         p101_call_result_8;
     int         p101_call_result_9;
-    int         p101_call_result_10;
     bool        ret_val;
 
     first         = NULL;
@@ -192,8 +193,10 @@ bool p101_module_map_idiom_module_shares_prefix(const struct p101_env *env, cons
         }
         else if(require_owner_prefix)
         {
-            p101_call_result_10 = p101_strncmp(env, first, "p101_", prefix_length);
-            if(prefix_length == (size_t)WRAPPER_PREFIX_LEN && p101_call_result_10 == 0)
+            int comparison;
+
+            comparison = p101_strncmp(env, first, "p101_", prefix_length);
+            if(prefix_length == (size_t)WRAPPER_PREFIX_LEN && comparison == 0)
             {
                 ret_val = false;
             }
@@ -206,8 +209,6 @@ bool p101_module_map_idiom_module_shares_prefix(const struct p101_env *env, cons
 bool p101_module_map_idiom_wraps_platform_name(const struct p101_env *env, const struct project_map *map, const struct function_record *function)
 {
     int  p101_call_result_16;
-    int  p101_call_result_17;
-    int  p101_call_result_18;
     bool ret_val;
 
     ret_val             = false;
@@ -216,14 +217,16 @@ bool p101_module_map_idiom_wraps_platform_name(const struct p101_env *env, const
     {
         for(size_t i = 0; i < map->call_count; i++)
         {
+            int module_comparison;
+            int name_comparison;
             int p101_expression_result_19;
 
-            p101_call_result_17       = p101_strcmp(env, map->calls[i].module, function->module);
+            module_comparison         = p101_strcmp(env, map->calls[i].module, function->module);
             p101_expression_result_19 = 0;
-            if(p101_call_result_17 == 0)
+            if(module_comparison == 0)
             {
-                p101_call_result_18 = p101_strcmp(env, map->calls[i].name, function->name + WRAPPER_PREFIX_LEN);
-                if(p101_call_result_18 == 0)
+                name_comparison = p101_strcmp(env, map->calls[i].name, function->name + WRAPPER_PREFIX_LEN);
+                if(name_comparison == 0)
                 {
                     p101_expression_result_19 = 1;
                 }
@@ -288,13 +291,13 @@ bool p101_module_map_idiom_guard_suffix(const struct p101_env *env, const char *
     while(base[written] != '\0' && base[written] != '.' && written + 3U < expected_size)
     {
         int p101_call_result_14;
-        int p101_call_result_15;
-
         p101_call_result_14 = p101_isalnum(env, (unsigned char)base[written]);
         if(p101_call_result_14)
         {
-            p101_call_result_15 = p101_toupper(env, (unsigned char)base[written]);
-            expected[written]   = (char)p101_call_result_15;
+            int uppercase_character;
+
+            uppercase_character = p101_toupper(env, (unsigned char)base[written]);
+            expected[written]   = (char)uppercase_character;
         }
         else
         {

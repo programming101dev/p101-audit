@@ -736,38 +736,38 @@ bool p101_module_map_write_findings(const struct p101_env *env, struct p101_erro
     for(size_t i = 0; i < map->function_count; i++)
     {
         const struct function_record *function;
-        char                          peer[MAX_NAME];
-        bool                          p101_call_result_58;
-        bool                          p101_call_result_59;
-        bool                          p101_call_result_60;
-        bool                          p101_call_result_61;
-        bool                          p101_call_result_66;
-        bool                          p101_call_result_67;
-        bool                          p101_call_result_68;
-        bool                          p101_call_result_69;
-        int                           p101_expression_result_62;
+        bool                          eligible;
+        bool                          wraps_platform_name;
 
-        function                  = &map->functions[i];
-        p101_expression_result_62 = 0;
+        function = &map->functions[i];
+        eligible = false;
         if(!function->is_static)
         {
             if(!function->is_header_declaration)
             {
-                p101_expression_result_62 = 1;
+                eligible = true;
             }
         }
-        if(p101_expression_result_62)
+        if(!eligible)
         {
-            p101_call_result_66 = p101_module_map_idiom_wraps_platform_name(env, map, function);
-            if(p101_call_result_66)
+            continue;
+        }
+        wraps_platform_name = p101_module_map_idiom_wraps_platform_name(env, map, function);
+        if(wraps_platform_name)
+        {
+            continue;
+        }
+        {
+            char peer[MAX_NAME];
+            bool has_pair_name;
+
+            has_pair_name = p101_module_map_idiom_swap_suffix(env, function->name, "_create", "_destroy", peer, sizeof(peer));
+            if(has_pair_name)
             {
-                continue;
-            }
-            p101_call_result_58 = p101_module_map_idiom_swap_suffix(env, function->name, "_create", "_destroy", peer, sizeof(peer));
-            if(p101_call_result_58)
-            {
-                p101_call_result_59 = p101_module_map_idiom_public_function_exists(env, map, function->module, peer);
-                if(!p101_call_result_59)
+                bool pair_exists;
+
+                pair_exists = p101_module_map_idiom_public_function_exists(env, map, function->module, peer);
+                if(!pair_exists)
                 {
                     p101_module_map_write_finding(env,
                                                   err,
@@ -783,34 +783,64 @@ bool p101_module_map_write_findings(const struct p101_env *env, struct p101_erro
                     wrote = true;
                 }
             }
-            p101_call_result_60 = false;
-            if(!args->library_mode)
+        }
+        if(!args->library_mode)
+        {
+            char peer[MAX_NAME];
+            bool has_pair_name;
+
+            has_pair_name = p101_module_map_idiom_swap_suffix(env, function->name, "_count", "_at", peer, sizeof(peer));
+            if(has_pair_name)
             {
-                p101_call_result_60 = p101_module_map_idiom_swap_suffix(env, function->name, "_count", "_at", peer, sizeof(peer));
+                bool pair_exists;
+
+                pair_exists = p101_module_map_idiom_public_function_exists(env, map, function->module, peer);
+                if(!pair_exists)
+                {
+                    p101_module_map_write_finding(env,
+                                                  err,
+                                                  &report,
+                                                  &finding_count,
+                                                  P101_MODULE_RULE_COLLECTION_ACCESSOR_PAIR,
+                                                  function->path,
+                                                  function->line,
+                                                  "`%s` has no matching `%s` in `%s`. Expose collections through a `_count`/`_at` accessor pair so callers can iterate without reaching into the representation.",
+                                                  function->name,
+                                                  peer,
+                                                  function->module);
+                    wrote = true;
+                }
             }
-            p101_call_result_68 = p101_module_map_idiom_swap_suffix(env, function->name, "_init", "_deinit", peer, sizeof(peer));
-            if(p101_call_result_68)
+        }
+        {
+            char peer[MAX_NAME];
+            bool has_pair_name;
+
+            has_pair_name = p101_module_map_idiom_swap_suffix(env, function->name, "_init", "_deinit", peer, sizeof(peer));
+            if(has_pair_name)
             {
                 char alternate[MAX_NAME];
+                bool has_alternate_name;
+                bool pair_exists;
 
-                p101_call_result_67 = p101_module_map_idiom_public_function_anywhere(env, map, peer);
-                if(!p101_call_result_67)
+                pair_exists = p101_module_map_idiom_public_function_anywhere(env, map, peer);
+                if(!pair_exists)
                 {
-                    p101_call_result_69 = p101_module_map_idiom_swap_suffix(env, function->name, "_init", "_destroy", alternate, sizeof(alternate));
-                    if(p101_call_result_69)
+                    has_alternate_name = p101_module_map_idiom_swap_suffix(env, function->name, "_init", "_destroy", alternate, sizeof(alternate));
+                    if(has_alternate_name)
                     {
-                        p101_call_result_67 = p101_module_map_idiom_public_function_anywhere(env, map, alternate);
+                        pair_exists = p101_module_map_idiom_public_function_anywhere(env, map, alternate);
                     }
                 }
-                if(!p101_call_result_67)
+                if(!pair_exists)
                 {
-                    p101_call_result_69 = p101_module_map_idiom_swap_suffix(env, function->name, "_init", "_fini", alternate, sizeof(alternate));
-                    if(p101_call_result_69)
+                    has_alternate_name = p101_module_map_idiom_swap_suffix(env, function->name, "_init", "_fini", alternate, sizeof(alternate));
+                    if(has_alternate_name)
                     {
-                        p101_call_result_67 = p101_module_map_idiom_public_function_anywhere(env, map, alternate);
+                        pair_exists = p101_module_map_idiom_public_function_anywhere(env, map, alternate);
                     }
                 }
-                if(!p101_call_result_67)
+                if(!pair_exists)
                 {
                     p101_module_map_write_finding(env,
                                                   err,
@@ -825,11 +855,18 @@ bool p101_module_map_write_findings(const struct p101_env *env, struct p101_erro
                     wrote = true;
                 }
             }
-            p101_call_result_68 = p101_module_map_idiom_swap_suffix(env, function->name, "_open", "_close", peer, sizeof(peer));
-            if(p101_call_result_68)
+        }
+        {
+            char peer[MAX_NAME];
+            bool has_pair_name;
+
+            has_pair_name = p101_module_map_idiom_swap_suffix(env, function->name, "_open", "_close", peer, sizeof(peer));
+            if(has_pair_name)
             {
-                p101_call_result_67 = p101_module_map_idiom_public_function_anywhere(env, map, peer);
-                if(!p101_call_result_67)
+                bool pair_exists;
+
+                pair_exists = p101_module_map_idiom_public_function_anywhere(env, map, peer);
+                if(!pair_exists)
                 {
                     p101_module_map_write_finding(env,
                                                   err,
@@ -844,11 +881,18 @@ bool p101_module_map_write_findings(const struct p101_env *env, struct p101_erro
                     wrote = true;
                 }
             }
-            p101_call_result_68 = p101_module_map_idiom_swap_suffix(env, function->name, "_from_name", "_name", peer, sizeof(peer));
-            if(p101_call_result_68)
+        }
+        {
+            char peer[MAX_NAME];
+            bool has_pair_name;
+
+            has_pair_name = p101_module_map_idiom_swap_suffix(env, function->name, "_from_name", "_name", peer, sizeof(peer));
+            if(has_pair_name)
             {
-                p101_call_result_67 = p101_module_map_idiom_public_function_exists(env, map, function->module, peer);
-                if(!p101_call_result_67)
+                bool pair_exists;
+
+                pair_exists = p101_module_map_idiom_public_function_exists(env, map, function->module, peer);
+                if(!pair_exists)
                 {
                     p101_module_map_write_finding(env,
                                                   err,
@@ -860,25 +904,6 @@ bool p101_module_map_write_findings(const struct p101_env *env, struct p101_erro
                                                   "Naming convention: `%s` has no matching `%s`. The `_from_name` spelling suggests a paired name conversion; only a round-trip test can establish behavioral symmetry.",
                                                   function->name,
                                                   peer);
-                    wrote = true;
-                }
-            }
-            if(p101_call_result_60)
-            {
-                p101_call_result_61 = p101_module_map_idiom_public_function_exists(env, map, function->module, peer);
-                if(!p101_call_result_61)
-                {
-                    p101_module_map_write_finding(env,
-                                                  err,
-                                                  &report,
-                                                  &finding_count,
-                                                  P101_MODULE_RULE_COLLECTION_ACCESSOR_PAIR,
-                                                  function->path,
-                                                  function->line,
-                                                  "`%s` has no matching `%s` in `%s`. Expose collections through a `_count`/`_at` accessor pair so callers can iterate without reaching into the representation.",
-                                                  function->name,
-                                                  peer,
-                                                  function->module);
                     wrote = true;
                 }
             }
@@ -918,13 +943,14 @@ bool p101_module_map_write_findings(const struct p101_env *env, struct p101_erro
     for(size_t i = 0; i < map->file_count; i++)
     {
         const struct source_file *file;
-        bool                      p101_call_result_70;
 
         file = &map->files[i];
         if(!file->is_header)
         {
-            p101_call_result_70 = p101_module_map_idiom_module_has_header(env, map, file->module);
-            if(p101_call_result_70)
+            bool module_has_header;
+
+            module_has_header = p101_module_map_idiom_module_has_header(env, map, file->module);
+            if(module_has_header)
             {
                 bool p101_call_result_71;
 
@@ -1062,15 +1088,13 @@ bool p101_module_map_write_findings(const struct p101_env *env, struct p101_erro
 
     for(size_t i = 0; i < map->file_count; i++)
     {
-        const struct source_file  *file;
-        const struct macro_record *guard;
-        char                       expected[MAX_NAME];
-        bool                       p101_call_result_64;
-        bool                       p101_call_result_65;
+        const struct source_file *file;
 
         file = &map->files[i];
         if(file->is_header)
         {
+            const struct macro_record *guard;
+
             guard = p101_module_map_idiom_guard_macro(env, map, file->path);
             if(guard == NULL)
             {
@@ -1087,11 +1111,16 @@ bool p101_module_map_write_findings(const struct p101_env *env, struct p101_erro
             }
             else
             {
-                p101_call_result_64 = p101_module_map_idiom_guard_suffix(env, file->path, expected, sizeof(expected));
-                if(p101_call_result_64)
+                char expected[MAX_NAME];
+                bool expected_available;
+
+                expected_available = p101_module_map_idiom_guard_suffix(env, file->path, expected, sizeof(expected));
+                if(expected_available)
                 {
-                    p101_call_result_65 = p101_module_map_idiom_name_ends_with(env, guard->name, expected);
-                    if(!p101_call_result_65)
+                    bool guard_matches;
+
+                    guard_matches = p101_module_map_idiom_name_ends_with(env, guard->name, expected);
+                    if(!guard_matches)
                     {
                         p101_module_map_write_finding(env,
                                                       err,

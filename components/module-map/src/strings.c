@@ -62,10 +62,6 @@ void p101_module_map_basename_no_suffix(const struct p101_env *env, char *destin
 
 void p101_module_map_include_to_module(const struct p101_env *env, char *destination, size_t destination_size, const char *include_name)
 {
-    int p101_expression_result_2;
-    int p101_expression_result_3;
-    int p101_call_result_4;
-    int p101_call_result_5;
     if(include_name[0] == '@')
     {
         p101_module_map_copy_string(env, destination, destination_size, include_name + 1);
@@ -75,36 +71,31 @@ void p101_module_map_include_to_module(const struct p101_env *env, char *destina
         char        normalized[MAX_NAME];
         const char *module_name;
         const char *slash;
+        bool        names_p101_module;
 
         p101_module_map_normalize_module_name(env, normalized, sizeof(normalized), include_name);
-        module_name              = normalized;
-        slash                    = p101_strchr(env, normalized, '/');
-        p101_expression_result_2 = 0;
+        module_name       = normalized;
+        slash             = p101_strchr(env, normalized, '/');
+        names_p101_module = false;
         if(slash != NULL)
         {
-            p101_call_result_4 = p101_strncmp(env, normalized, "p101_", sizeof("p101_") - 1U);
-            if(p101_call_result_4 == 0)
+            int comparison;
+
+            comparison = p101_strncmp(env, normalized, "p101_", sizeof("p101_") - 1U);
+            if(comparison == 0)
             {
-                p101_expression_result_3 = 1;
+                names_p101_module = true;
             }
             else
             {
-                p101_call_result_5 = p101_strncmp(env, normalized, "p101/", sizeof("p101/") - 1U);
-                if(p101_call_result_5 == 0)
+                comparison = p101_strncmp(env, normalized, "p101/", sizeof("p101/") - 1U);
+                if(comparison == 0)
                 {
-                    p101_expression_result_3 = 1;
+                    names_p101_module = true;
                 }
-                else
-                {
-                    p101_expression_result_3 = 0;
-                }
-            }
-            if(p101_expression_result_3)
-            {
-                p101_expression_result_2 = 1;
             }
         }
-        if(p101_expression_result_2)
+        if(names_p101_module)
         {
             module_name = slash + 1;
         }
@@ -135,10 +126,10 @@ void p101_module_map_normalize_module_name(const struct p101_env *env, char *des
 
 char *p101_module_map_trim_left(const struct p101_env *env, char *text)
 {
-    int is_space;
-
     for(;;)
     {
+        int is_space;
+
         if(*text == '\0')
         {
             break;
@@ -156,11 +147,12 @@ char *p101_module_map_trim_left(const struct p101_env *env, char *text)
 void p101_module_map_trim_right(const struct p101_env *env, char *text)
 {
     size_t len;
-    int    is_space;
 
     len = p101_strlen(env, text);
     for(;;)
     {
+        int is_space;
+
         if(len == 0U)
         {
             break;
