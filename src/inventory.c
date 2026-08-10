@@ -485,48 +485,15 @@ done:
     return loaded;
 }
 
-static bool find_workspace_libraries(const struct p101_env *env, const char *program_path, char *path, size_t size)
+static bool find_libraries_from_directory(const struct p101_env *env, char *current, char *path, size_t size)
 {
-    int         p101_expression_result_33;
-    const char *p101_call_result_34;
-    int         p101_expression_result_35;
-    int         p101_call_result_36;
-    const char *p101_call_result_14;
-    char        current[P101_WRAPPER_PATH_SIZE];
-    size_t      attempt;
-    bool        found;
+    int    p101_expression_result_35;
+    int    p101_call_result_36;
+    size_t attempt;
+    bool   found;
 
     P101_TRACE_SCOPE(env);
     found = false;
-    /* P101_ERROR_OPTIONAL rationale: discovery probes candidate roots. */
-    p101_expression_result_33 = 0;
-    if(program_path != NULL)
-    {
-        p101_call_result_34 = p101_realpath(env, P101_ERROR_OPTIONAL, program_path, current);
-        if(p101_call_result_34 != NULL)
-        {
-            p101_expression_result_33 = 1;
-        }
-    }
-    if(p101_expression_result_33)
-    {
-        const char *slash;
-
-        slash = p101_strrchr(env, current, '/');
-        if(slash != NULL)
-        {
-            current[(size_t)(slash - current)] = '\0';
-        }
-    }
-    /* P101_ERROR_OPTIONAL rationale: discovery failure is returned as false. */
-    else
-    {
-        p101_call_result_14 = p101_getcwd(env, P101_ERROR_OPTIONAL, current, sizeof(current));
-        if(p101_call_result_14 == NULL)
-        {
-            goto done;
-        }
-    }
     for(attempt = 0U; attempt < WORKSPACE_PARENT_LIMIT; attempt++)
     {
         struct stat status;
@@ -561,7 +528,48 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
         path[0] = '\0';
     }
 
-done:
+    return found;
+}
+
+static bool find_workspace_libraries(const struct p101_env *env, const char *program_path, char *path, size_t size)
+{
+    const char *p101_call_result_34;
+    const char *p101_call_result_14;
+    char        current[P101_WRAPPER_PATH_SIZE];
+    bool        found;
+
+    P101_TRACE_SCOPE(env);
+    found = false;
+    /* P101_ERROR_OPTIONAL rationale: executable ancestry is a convenience probe. */
+    p101_call_result_34 = NULL;
+    if(program_path != NULL)
+    {
+        p101_call_result_34 = p101_realpath(env, P101_ERROR_OPTIONAL, program_path, current);
+    }
+    if(p101_call_result_34 != NULL)
+    {
+        const char *slash;
+
+        slash = p101_strrchr(env, current, '/');
+        if(slash != NULL)
+        {
+            current[(size_t)(slash - current)] = '\0';
+            found                              = find_libraries_from_directory(env, current, path, size);
+        }
+    }
+    if(!found)
+    {
+        /* P101_ERROR_OPTIONAL rationale: caller ancestry is the fallback probe. */
+        p101_call_result_14 = p101_getcwd(env, P101_ERROR_OPTIONAL, current, sizeof(current));
+        if(p101_call_result_14 != NULL)
+        {
+            found = find_libraries_from_directory(env, current, path, size);
+        }
+    }
+    if(!found)
+    {
+        path[0] = '\0';
+    }
     return found;
 }
 
