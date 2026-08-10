@@ -52,7 +52,7 @@ Examples:
 audit-modules src include
 audit-modules -o module-map.md src include
 audit-modules -l layers.txt src include
-audit-modules -m 8 -p 4 programs/simple-port-forwarder/src
+audit-modules -m 8 -p 4 programs/p101-port-forwarder/src
 audit-modules -C build-clang/compile_commands.json src include
 audit-modules -L -C build-clang/compile_commands.json src include
 audit-modules -i source-facts.tsv -o module-map.md src include
