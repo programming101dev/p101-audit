@@ -487,8 +487,6 @@ done:
 
 static bool find_libraries_from_directory(const struct p101_env *env, char *current, char *path, size_t size)
 {
-    int    p101_expression_result_35;
-    int    p101_call_result_36;
     size_t attempt;
     bool   found;
 
@@ -498,20 +496,22 @@ static bool find_libraries_from_directory(const struct p101_env *env, char *curr
     {
         struct stat status;
         const char *slash;
+        int         stat_result;
+        bool        is_directory;
 
         /* P101_ERROR_OPTIONAL rationale: an empty path rejects this discovery candidate. */
         p101_snprintf(env, P101_ERROR_OPTIONAL, path, size, "%s/libraries", current);
         /* P101_ERROR_OPTIONAL rationale: discovery probes candidate roots. */
-        p101_call_result_36       = p101_stat(env, P101_ERROR_OPTIONAL, path, &status);
-        p101_expression_result_35 = 0;
-        if(p101_call_result_36 == 0)
+        stat_result  = p101_stat(env, P101_ERROR_OPTIONAL, path, &status);
+        is_directory = false;
+        if(stat_result == 0)
         {
             if(S_ISDIR(status.st_mode))
             {
-                p101_expression_result_35 = 1;
+                is_directory = true;
             }
         }
-        if(p101_expression_result_35)
+        if(is_directory)
         {
             found = true;
             break;
@@ -534,7 +534,6 @@ static bool find_libraries_from_directory(const struct p101_env *env, char *curr
 static bool find_workspace_libraries(const struct p101_env *env, const char *program_path, char *path, size_t size)
 {
     const char *p101_call_result_34;
-    const char *p101_call_result_14;
     char        current[P101_WRAPPER_PATH_SIZE];
     bool        found;
 
@@ -559,9 +558,11 @@ static bool find_workspace_libraries(const struct p101_env *env, const char *pro
     }
     if(!found)
     {
+        const char *current_directory;
+
         /* P101_ERROR_OPTIONAL rationale: caller ancestry is the fallback probe. */
-        p101_call_result_14 = p101_getcwd(env, P101_ERROR_OPTIONAL, current, sizeof(current));
-        if(p101_call_result_14 != NULL)
+        current_directory = p101_getcwd(env, P101_ERROR_OPTIONAL, current, sizeof(current));
+        if(current_directory != NULL)
         {
             found = find_libraries_from_directory(env, current, path, size);
         }

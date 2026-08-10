@@ -9,14 +9,15 @@ const struct include_record *p101_module_map_idiom_first_local_include(const str
     ret_val = NULL;
     for(size_t i = 0; i < map->include_count; i++)
     {
-        int p101_call_result_1;
         int p101_expression_result_2;
 
         p101_expression_result_2 = 0;
         if(map->includes[i].is_local)
         {
-            p101_call_result_1 = p101_strcmp(env, map->includes[i].path, path);
-            if(p101_call_result_1 == 0)
+            int comparison;
+
+            comparison = p101_strcmp(env, map->includes[i].path, path);
+            if(comparison == 0)
             {
                 if(ret_val == NULL || map->includes[i].line < ret_val->line)
                 {
@@ -70,16 +71,16 @@ bool p101_module_map_idiom_target_matches_module(const struct p101_env *env, con
     p101_call_result_4 = p101_strncmp(env, tail, base, base_length);
     if(p101_call_result_4 == 0)
     {
-        int p101_call_result_5;
-
         if(tail[base_length] == '\0')
         {
             ret_val = true;
         }
         else
         {
-            p101_call_result_5 = p101_strcmp(env, tail + base_length, "_internal");
-            if(p101_call_result_5 == 0)
+            int comparison;
+
+            comparison = p101_strcmp(env, tail + base_length, "_internal");
+            if(comparison == 0)
             {
                 ret_val = true;
             }
@@ -96,14 +97,15 @@ bool p101_module_map_idiom_source_includes_own(const struct p101_env *env, const
     ret_val = false;
     for(size_t i = 0; i < map->include_count; i++)
     {
-        int p101_call_result_6;
         int p101_expression_result_7;
 
         p101_expression_result_7 = 0;
         if(map->includes[i].is_local)
         {
-            p101_call_result_6 = p101_strcmp(env, map->includes[i].path, path);
-            if(p101_call_result_6 == 0)
+            int comparison;
+
+            comparison = p101_strcmp(env, map->includes[i].path, path);
+            if(comparison == 0)
             {
                 bool p101_call_result_8;
 
