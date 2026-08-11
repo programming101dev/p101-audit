@@ -272,6 +272,23 @@ SOURCE
 "$audit" "$work/macro-wrapper-implementation.c" >/dev/null
 rm -f "$work/macro-wrapper-implementation.c"
 
+cat >"$work/macro-lowered-wrapper-implementation.c" <<'SOURCE'
+char *__xpg_basename(char *path);
+#define basename __xpg_basename
+
+char *p101_basename(const void *env, void *err, char *path)
+{
+    char *result;
+
+    (void)env;
+    (void)err;
+    result = basename(path);
+    return result;
+}
+SOURCE
+"$audit" "$work/macro-lowered-wrapper-implementation.c" >/dev/null
+rm -f "$work/macro-lowered-wrapper-implementation.c"
+
 printf '*\tc:@F@missing\tc:@F@external_boundary\n' >"$work/stale.rules"
 set +e
 "$audit" "${semantic_allows[@]}" --allow-file "$work/stale.rules" \

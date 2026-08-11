@@ -789,7 +789,7 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
             {
                 wrapper = NULL;
             }
-            p101_call_result_11 = p101_wrapper_is_wrapper_implementation(env, fact, wrapper);
+            p101_call_result_11 = p101_wrapper_is_wrapper_implementation(env, model, fact, wrapper);
             if(p101_call_result_11)
             {
                 continue;

@@ -1,18 +1,60 @@
 #include "judge_support.h"
 #include <p101_c/p101_string.h>
 
-static bool caller_is_declared_wrapper(const struct p101_env *env, const struct p101_wrapper_fact *call, const struct p101_wrapper_inventory *wrapper)
+static const char *semantic_caller_usr(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *call)
 {
-    int  comparison;
-    bool declared;
+    const char *caller_usr;
+    size_t      narrowest_span;
 
     P101_TRACE_SCOPE(env);
-    declared = false;
-    if(wrapper == NULL || wrapper->wrapper_usr[0] == '\0' || call->caller_usr[0] == '\0')
+    caller_usr     = call->caller_usr;
+    narrowest_span = SIZE_MAX;
+    if(caller_usr[0] != '\0')
     {
         goto done;
     }
-    comparison = p101_strcmp(env, wrapper->wrapper_usr, call->caller_usr);
+    for(size_t index = 0U; index < model->fact_count; index++)
+    {
+        const struct p101_wrapper_fact *candidate;
+        size_t                          span;
+        int                             path_comparison;
+
+        candidate = &model->facts[index];
+        if(candidate->kind != P101_C_ANALYSIS_FUNCTION || !candidate->is_definition || candidate->end < candidate->start)
+        {
+            continue;
+        }
+        path_comparison = p101_strcmp(env, candidate->path, call->path);
+        if(path_comparison != 0 || call->start < candidate->start || call->start >= candidate->end)
+        {
+            continue;
+        }
+        span = candidate->end - candidate->start;
+        if(span < narrowest_span)
+        {
+            caller_usr     = candidate->usr;
+            narrowest_span = span;
+        }
+    }
+
+done:
+    return caller_usr;
+}
+
+static bool caller_is_declared_wrapper(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *call, const struct p101_wrapper_inventory *wrapper)
+{
+    const char *caller_usr;
+    int         comparison;
+    bool        declared;
+
+    P101_TRACE_SCOPE(env);
+    declared   = false;
+    caller_usr = semantic_caller_usr(env, model, call);
+    if(wrapper == NULL || wrapper->wrapper_usr[0] == '\0' || caller_usr[0] == '\0')
+    {
+        goto done;
+    }
+    comparison = p101_strcmp(env, wrapper->wrapper_usr, caller_usr);
     if(comparison == 0)
     {
         declared = true;
@@ -22,7 +64,7 @@ done:
     return declared;
 }
 
-bool p101_wrapper_is_wrapper_implementation(const struct p101_env *env, const struct p101_wrapper_fact *call, const struct p101_wrapper_inventory *wrapper)
+bool p101_wrapper_is_wrapper_implementation(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *call, const struct p101_wrapper_inventory *wrapper)
 {
     static const struct
     {
@@ -40,13 +82,15 @@ bool p101_wrapper_is_wrapper_implementation(const struct p101_env *env, const st
         {"c:@F@fputwc",         "c:@F@p101_putwchar"},
     };
 
-    size_t index;
-    bool   implementation;
-    bool   declared;
+    size_t      index;
+    const char *caller_usr;
+    bool        implementation;
+    bool        declared;
 
     P101_TRACE_SCOPE(env);
     implementation = false;
-    declared       = caller_is_declared_wrapper(env, call, wrapper);
+    caller_usr     = semantic_caller_usr(env, model, call);
+    declared       = caller_is_declared_wrapper(env, model, call, wrapper);
     if(declared)
     {
         implementation = true;
@@ -62,7 +106,7 @@ bool p101_wrapper_is_wrapper_implementation(const struct p101_env *env, const st
         {
             continue;
         }
-        wrapper_comparison = p101_strcmp(env, call->caller_usr, aliases[index].wrapper_usr);
+        wrapper_comparison = p101_strcmp(env, caller_usr, aliases[index].wrapper_usr);
         if(wrapper_comparison == 0)
         {
             implementation = true;
