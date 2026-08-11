@@ -246,6 +246,10 @@ cat >"$work/macro-wrapper.c" <<'SOURCE'
 void *native_allocate(size_t size);
 #define malloc(size) native_allocate(size)
 
+#ifndef malloc
+#error "malloc macro disappeared"
+#endif
+
 void *allocate_one(void)
 {
     return malloc(1);
@@ -257,6 +261,7 @@ status=$?
 set -e
 [ "$status" -eq 1 ]
 grep -q 'malloc -> p101_malloc' "$work/macro-wrapper.out"
+[ "$(grep -c 'missed-wrapper: malloc -> p101_malloc' "$work/macro-wrapper.out")" -eq 1 ]
 printf '*\t\tc:@F@malloc\n' >"$work/macro-wrapper.rules"
 "$audit" --allow-file "$work/macro-wrapper.rules" "$work/macro-wrapper.c" >/dev/null
 rm -f "$work/macro-wrapper.c" "$work/macro-wrapper.rules"

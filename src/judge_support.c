@@ -1,7 +1,7 @@
 #include "judge_support.h"
 #include <p101_c/p101_string.h>
 
-static const char *semantic_caller_usr(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *call)
+const char *p101_wrapper_semantic_caller_usr(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *call)
 {
     const char *caller_usr;
     size_t      narrowest_span;
@@ -49,7 +49,7 @@ static bool caller_is_declared_wrapper(const struct p101_env *env, const struct 
 
     P101_TRACE_SCOPE(env);
     declared   = false;
-    caller_usr = semantic_caller_usr(env, model, call);
+    caller_usr = p101_wrapper_semantic_caller_usr(env, model, call);
     if(wrapper == NULL || wrapper->wrapper_usr[0] == '\0' || caller_usr[0] == '\0')
     {
         goto done;
@@ -89,7 +89,7 @@ bool p101_wrapper_is_wrapper_implementation(const struct p101_env *env, const st
 
     P101_TRACE_SCOPE(env);
     implementation = false;
-    caller_usr     = semantic_caller_usr(env, model, call);
+    caller_usr     = p101_wrapper_semantic_caller_usr(env, model, call);
     declared       = caller_is_declared_wrapper(env, model, call, wrapper);
     if(declared)
     {

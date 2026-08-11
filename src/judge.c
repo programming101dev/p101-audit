@@ -697,6 +697,24 @@ bool p101_wrapper_model_judge(const struct p101_env *env, struct p101_error *err
             const char                          *name;
             const struct p101_wrapper_inventory *wrapper;
 
+            if(fact->kind == P101_C_ANALYSIS_MACRO)
+            {
+                const char *caller_usr;
+
+                caller_usr = p101_wrapper_semantic_caller_usr(env, model, fact);
+                /*
+                 * A macro mentioned by a preprocessing condition is not an
+                 * executable API operation.  libclang reports both that use
+                 * and a function-like macro expansion as macro facts; only
+                 * an expansion enclosed by a semantic function can cross a
+                 * wrapper boundary.
+                 */
+                if(caller_usr[0] == '\0')
+                {
+                    continue;
+                }
+            }
+
             name    = fact->name;
             wrapper = find_wrapper(env, model, fact);
             /*
