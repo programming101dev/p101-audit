@@ -31,7 +31,7 @@ MANIFEST
 printf 'malformed nested manifest\n' > \
     "$inventory_workspace/libraries/lib_root/test/transient/api-manifest.tsv"
 "$inventory_audit" --show-inventory >"$work/inventory.txt"
-grep -q '^fixture -> p101_fixture$' "$work/inventory.txt"
+grep -q $'^fixture\tc:@F@fixture\tp101_fixture\tc:@F@p101_fixture$' "$work/inventory.txt"
 
 set +e
 "$audit" -j >/dev/null 2>&1

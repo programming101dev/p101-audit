@@ -410,7 +410,7 @@ done:
     {
         p101_free(env, entries[entry_index]);
     }
-    p101_free(env, entries);
+    p101_free(env, (void *)entries);
     return loaded;
 }
 
