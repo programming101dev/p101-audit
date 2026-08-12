@@ -44,6 +44,34 @@ run_expect() {
 
 common=(-A "$work/audit-wrappers" -E "$work/audit-errors"
   -M "$work/audit-modules")
+fault_jobs=${P101_DOCTOR_FAULT_JOBS:-4}
+case "$fault_jobs" in
+  ''|*[!0-9]*|0) echo "P101_DOCTOR_FAULT_JOBS must be positive" >&2; exit 2 ;;
+esac
+
+run_fault_campaign() {
+  prefix=$1
+  count=$2
+  shift 2
+  pids=()
+  for index in $(seq 1 "$count"); do
+    (
+      P101_FAULT_CALL=$index P101_FAULT_ERRNO=5 \
+        "$doctor" "$@" -o "$work/$prefix-$index" "${common[@]}" \
+        -- /usr/bin/true >/dev/null 2>&1 || :
+    ) &
+    pids+=("$!")
+    if [ "${#pids[@]}" -eq "$fault_jobs" ]; then
+      for pid in "${pids[@]}"; do
+        wait "$pid" || :
+      done
+      pids=()
+    fi
+  done
+  for pid in "${pids[@]}"; do
+    wait "$pid" || :
+  done
+}
 
 run_expect 0 --help
 run_expect 0 -h
@@ -85,16 +113,8 @@ run_expect 2 "${many_sources[@]}" -- /usr/bin/true
 
 # Walk every wrapper failure point in the doctor itself. This exercises the
 # error paths that ordinary successful fake tools cannot reach.
-for index in $(seq 1 180); do
-  P101_FAULT_CALL=$index P101_FAULT_ERRNO=5 \
-    "$doctor" -o "$work/fault-$index" "${common[@]}" -- /usr/bin/true \
-    >/dev/null 2>&1 || :
-done
+run_fault_campaign fault 180
 
 # Exercise source-contract-free auto-discovery failures before a child tool
 # starts. The ordinary failure walk takes the source-contract path instead.
-for index in $(seq 1 80); do
-  P101_FAULT_CALL=$index P101_FAULT_ERRNO=5 \
-    "$doctor" -x -o "$work/skip-fault-$index" "${common[@]}" -- /usr/bin/true \
-    >/dev/null 2>&1 || :
-done
+run_fault_campaign skip-fault 80 -x
