@@ -15,6 +15,24 @@ trap 'rm -rf "$work"' EXIT
 
 "$audit" --help >/dev/null 2>&1
 "$facts" --help >/dev/null 2>&1
+
+# Inventory discovery admits only libraries/<repository>/api-manifest.tsv.
+# A transient or malformed file below a repository must not widen that input
+# boundary or race concurrent test/build cleanup.
+inventory_workspace="$work/inventory-workspace"
+inventory_audit="$inventory_workspace/programs/p101-audit/audit-wrappers"
+mkdir -p "$inventory_workspace/programs/p101-audit" \
+    "$inventory_workspace/libraries/lib_root/test/transient"
+cp "$audit" "$inventory_audit"
+cat >"$inventory_workspace/libraries/lib_root/api-manifest.tsv" <<'MANIFEST'
+function	function_usr	current_source	native_function	native_function_usr
+p101_fixture	c:@F@p101_fixture	libraries/lib_root/src/fixture.c	fixture	c:@F@fixture
+MANIFEST
+printf 'malformed nested manifest\n' > \
+    "$inventory_workspace/libraries/lib_root/test/transient/api-manifest.tsv"
+"$inventory_audit" --show-inventory >"$work/inventory.txt"
+grep -q '^fixture -> p101_fixture$' "$work/inventory.txt"
+
 set +e
 "$audit" -j >/dev/null 2>&1
 status=$?

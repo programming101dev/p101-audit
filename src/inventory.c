@@ -334,154 +334,83 @@ done:
     return loaded;
 }
 
-static bool load_manifests(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *directory)    // NOLINT(misc-no-recursion)
+/*
+ * API manifests are workspace contracts, not discoverable source artifacts.
+ * Admit only libraries/<repository>/api-manifest.tsv.  Recursing through
+ * entire repositories both widened the input boundary and raced concurrent
+ * test/build cleanup between readdir and lstat.
+ */
+static bool load_manifests(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model, const char *directory)
 {
-    int            p101_expression_result_22;
-    int            p101_expression_result_23;
-    int            p101_expression_result_24;
-    int            p101_expression_result_25;
-    int            p101_call_result_26;
-    int            p101_call_result_27;
-    int            p101_call_result_28;
-    int            p101_call_result_29;
-    int            p101_call_result_30;
-    int            p101_expression_result_31;
-    int            p101_call_result_32;
-    int            p101_call_result_7;
-    bool           p101_call_result_8;
-    bool           p101_call_result_9;
-    bool           no_error;
-    DIR           *stream;
-    struct dirent *entry;
-    bool           loaded;
+    int             p101_call_result_26;
+    int             p101_call_result_27;
+    bool            p101_call_result_9;
+    struct dirent **entries;
+    int             entry_count;
+    int             entry_index;
+    bool            loaded;
 
     P101_TRACE_SCOPE(env);
-    loaded = false;
-    stream = p101_opendir(env, err, directory);
-    if(stream == NULL)
+    entries     = NULL;
+    entry_count = p101_scandir(env, err, directory, &entries, NULL, alphasort);
+    loaded      = entry_count >= 0;
+    if(!loaded)
     {
         goto done;
     }
-    for(;;)
+    for(entry_index = 0; entry_index < entry_count; entry_index++)
     {
-        char        path[P101_WRAPPER_PATH_SIZE];
-        struct stat status;
+        struct dirent *entry;
+        char           path[P101_WRAPPER_PATH_SIZE];
+        int            access_status;
+        int            actual_error;
+        bool           no_error;
 
-        entry = p101_readdir(env, err, stream);
-        if(entry == NULL)
-        {
-            break;
-        }
-        no_error = p101_error_has_no_error(err);
-        if(!no_error)
-        {
-            break;
-        }
+        entry               = entries[entry_index];
         p101_call_result_26 = p101_strcmp(env, entry->d_name, ".");
         if(p101_call_result_26 == 0)
         {
-            p101_expression_result_25 = 1;
+            continue;
         }
-        else
-        {
-            p101_call_result_27 = p101_strcmp(env, entry->d_name, "..");
-            if(p101_call_result_27 == 0)
-            {
-                p101_expression_result_25 = 1;
-            }
-            else
-            {
-                p101_expression_result_25 = 0;
-            }
-        }
-        if(p101_expression_result_25)
-        {
-            p101_expression_result_24 = 1;
-        }
-        else
-        {
-            p101_call_result_28 = p101_strcmp(env, entry->d_name, ".git");
-            if(p101_call_result_28 == 0)
-            {
-                p101_expression_result_24 = 1;
-            }
-            else
-            {
-                p101_expression_result_24 = 0;
-            }
-        }
-        if(p101_expression_result_24)
-        {
-            p101_expression_result_23 = 1;
-        }
-        else
-        {
-            p101_call_result_29 = p101_strcmp(env, entry->d_name, "build");
-            if(p101_call_result_29 == 0)
-            {
-                p101_expression_result_23 = 1;
-            }
-            else
-            {
-                p101_expression_result_23 = 0;
-            }
-        }
-        if(p101_expression_result_23)
-        {
-            p101_expression_result_22 = 1;
-        }
-        else
-        {
-            p101_call_result_30 = p101_strncmp(env, entry->d_name, "build-", sizeof("build-") - 1U);
-            if(p101_call_result_30 == 0)
-            {
-                p101_expression_result_22 = 1;
-            }
-            else
-            {
-                p101_expression_result_22 = 0;
-            }
-        }
-        if(p101_expression_result_22)
+        p101_call_result_27 = p101_strcmp(env, entry->d_name, "..");
+        if(p101_call_result_27 == 0)
         {
             continue;
         }
-        p101_snprintf(env, err, path, sizeof(path), "%s/%s", directory, entry->d_name);
-        p101_call_result_7 = p101_lstat(env, err, path, &status);
-        if(p101_call_result_7 != 0)
+        p101_snprintf(env, err, path, sizeof(path), "%s/%s/api-manifest.tsv", directory, entry->d_name);
+        no_error = p101_error_has_no_error(err);
+        if(!no_error)
         {
+            loaded = false;
             break;
         }
-        p101_expression_result_31 = 0;
-        if(S_ISREG(status.st_mode))
+        errno         = 0;
+        access_status = p101_access(env, P101_ERROR_OPTIONAL, path, F_OK);
+        actual_error  = errno;
+        if(access_status != 0)
         {
-            p101_call_result_32 = p101_strcmp(env, entry->d_name, "api-manifest.tsv");
-            if(p101_call_result_32 == 0)
+            if(actual_error == ENOENT || actual_error == ENOTDIR)
             {
-                p101_expression_result_31 = 1;
+                continue;
             }
+            P101_ERROR_RAISE_ERRNO(err, actual_error);
+            loaded = false;
+            break;
         }
-        if(S_ISDIR(status.st_mode))
+        p101_call_result_9 = load_manifest_file(env, err, model, path);
+        if(!p101_call_result_9)
         {
-            p101_call_result_8 = load_manifests(env, err, model, path);
-            if(!p101_call_result_8)
-            {
-                break;
-            }
-        }
-        else if(p101_expression_result_31)
-        {
-            p101_call_result_9 = load_manifest_file(env, err, model, path);
-            if(!p101_call_result_9)
-            {
-                break;
-            }
+            loaded = false;
+            break;
         }
     }
-    p101_closedir(env, err, stream);
-    loaded = p101_error_has_no_error(err);
 
 done:
+    for(entry_index = 0; entry_index < entry_count; entry_index++)
+    {
+        p101_free(env, entries[entry_index]);
+    }
+    p101_free(env, entries);
     return loaded;
 }
 
