@@ -158,6 +158,7 @@ static bool apply_record(const struct p101_env *env, struct p101_error *err, con
     switch(record->kind)
     {
         case P101_C_ANALYSIS_FILE:
+        case P101_C_ANALYSIS_PARAMETER:
         case P101_C_ANALYSIS_MUTATION:
         case P101_C_ANALYSIS_DIAGNOSTIC:
             break;

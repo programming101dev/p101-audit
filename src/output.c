@@ -412,6 +412,7 @@ void p101_wrapper_write_facts(const struct p101_env *env, struct p101_error *err
     const char *p101_call_result_13;
     const char *p101_call_result_14;
     const char *p101_call_result_15;
+    const char *p101_call_result_16;
     size_t      index;
 
     P101_TRACE_SCOPE(env);
@@ -497,6 +498,24 @@ void p101_wrapper_write_facts(const struct p101_env *env, struct p101_error *err
             p101_fputc(env, err, '\t', stream);
             tsv_string(env, err, stream, fact->usr);
             p101_fprintf(env, err, stream, "\t%zu\t%zu", fact->start, fact->end);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->type);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->return_type);
+            p101_call_result_16 = bool_text(fact->is_variadic);
+            p101_fprintf(env, err, stream, "\t%s", p101_call_result_16);
+        }
+        else if(fact->kind == P101_C_ANALYSIS_PARAMETER)
+        {
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->name);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->type);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->canonical_type);
+            p101_fputc(env, err, '\t', stream);
+            tsv_string(env, err, stream, fact->caller_usr);
+            p101_fprintf(env, err, stream, "\t%zu\t%zu\t%zu", fact->parameter_index, fact->start, fact->end);
         }
         else if(fact->kind == P101_C_ANALYSIS_CALL)
         {

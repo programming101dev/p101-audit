@@ -13,7 +13,7 @@ tools. It runs a project through:
 The lower-level tools remain the source of truth. `audit-doctor` gives students
 and reviewers one command that leaves behind a readable source-quality index.
 Runtime capture, fault campaigns, and replay analysis are separate
-`scripts/runtime/p101-run.py`, `test-faults`, and `scripts/runtime/p101-analyze.py` operations.
+`p101-inspect run`, `test-faults`, and `p101-inspect analyze` operations.
 Use `-x` when you want the module check without the static p101 source-contract
 checks.
 
@@ -84,7 +84,7 @@ project can all hide issues from the final summary.
 
 For source checks, the doctor runs one Clang AST pass through
 `audit-wrappers`, writes `source-facts.tsv` plus `source-inputs.json`, and
-feeds that immutable P101FACT v7 snapshot to both `audit-errors` and
+feeds that immutable P101FACT v8 snapshot to both `audit-errors` and
 `audit-modules`. The wrapper pass also enables its portability-header rule
 pack, so known platform-only headers are reported at the wrapper boundary
 rather than as module-structure findings. Use `-C` to pin the compilation

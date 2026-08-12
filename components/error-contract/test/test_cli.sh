@@ -71,47 +71,47 @@ grep -q '"message":' "$work/both.json"
 grep -q ': error:' "$work/both.txt"
 expect 1 -q "$work/sample.c"
 cat >"$work/balanced.tsv" <<'FACTS'
-P101FACT	7	CALL	balanced.c	balanced	0	1	p101_error_create	0	0	0	balanced	c:@F@p101_error_create	c:@F@balanced	0	0
-P101FACT	7	CALL	balanced.c	balanced	0	2	p101_error_destroy	0	0	0	balanced	c:@F@p101_error_destroy	c:@F@balanced	0	0
-P101FACT	7	CALL	balanced.c	balanced	0	3	p101_env_create	0	0	0	balanced	c:@F@p101_env_create	c:@F@balanced	0	0
-P101FACT	7	CALL	balanced.c	balanced	0	4	p101_env_destroy	0	0	0	balanced	c:@F@p101_env_destroy	c:@F@balanced	0	0
+P101FACT	8	CALL	balanced.c	balanced	0	1	p101_error_create	0	0	0	balanced	c:@F@p101_error_create	c:@F@balanced	0	0
+P101FACT	8	CALL	balanced.c	balanced	0	2	p101_error_destroy	0	0	0	balanced	c:@F@p101_error_destroy	c:@F@balanced	0	0
+P101FACT	8	CALL	balanced.c	balanced	0	3	p101_env_create	0	0	0	balanced	c:@F@p101_env_create	c:@F@balanced	0	0
+P101FACT	8	CALL	balanced.c	balanced	0	4	p101_env_destroy	0	0	0	balanced	c:@F@p101_env_destroy	c:@F@balanced	0	0
 FACTS
 expect 0 -i "$work/balanced.tsv"
 cat >"$work/termination.tsv" <<'FACTS'
-P101FACT	7	FUNCTION	termination.c	termination	0	1	helper	1	0	c:@F@helper	0	0
-P101FACT	7	CALL	termination.c	termination	0	3	exit	0	0	0	helper	c:@F@exit	c:@F@helper	0	0
+P101FACT	8	FUNCTION	termination.c	termination	0	1	helper	1	0	c:@F@helper	0	0	int (void)	int	0
+P101FACT	8	CALL	termination.c	termination	0	3	exit	0	0	0	helper	c:@F@exit	c:@F@helper	0	0
 FACTS
 expect 1 -i "$work/termination.tsv"
 grep -q 'P101-ERR-007' "$work/stdout"
 cat >"$work/multiple-exits.tsv" <<'FACTS'
-P101FACT	7	FUNCTION	multiple.c	multiple	0	1	helper	1	0	c:@F@helper	0	0
-P101FACT	7	NOTE	multiple.c	multiple	0	3	FUNCTION_RETURN	helper	5	c:@F@helper	0	0
-P101FACT	7	NOTE	multiple.c	multiple	0	7	FUNCTION_RETURN	helper	5	c:@F@helper	0	0
+P101FACT	8	FUNCTION	multiple.c	multiple	0	1	helper	1	0	c:@F@helper	0	0	int (void)	int	0
+P101FACT	8	NOTE	multiple.c	multiple	0	3	FUNCTION_RETURN	helper	5	c:@F@helper	0	0
+P101FACT	8	NOTE	multiple.c	multiple	0	7	FUNCTION_RETURN	helper	5	c:@F@helper	0	0
 FACTS
 expect 1 -i "$work/multiple-exits.tsv"
 grep -q 'P101-ERR-008' "$work/stdout"
 cat >"$work/early-return.tsv" <<'FACTS'
-P101FACT	7	FUNCTION	early.c	early	0	1	helper	1	0	c:@F@helper	0	20
-P101FACT	7	NOTE	early.c	early	0	3	FUNCTION_EARLY_RETURN	helper	5	c:@F@helper	4	8
-P101FACT	7	NOTE	early.c	early	0	7	FUNCTION_RETURN	helper	5	c:@F@helper	15	19
+P101FACT	8	FUNCTION	early.c	early	0	1	helper	1	0	c:@F@helper	0	20	int (void)	int	0
+P101FACT	8	NOTE	early.c	early	0	3	FUNCTION_EARLY_RETURN	helper	5	c:@F@helper	4	8
+P101FACT	8	NOTE	early.c	early	0	7	FUNCTION_RETURN	helper	5	c:@F@helper	15	19
 FACTS
 expect 1 -i "$work/early-return.tsv"
 grep -q 'P101-ERR-008' "$work/stdout"
 grep -q "not the function's final top-level statement" "$work/stdout"
 cat >"$work/single-exit.tsv" <<'FACTS'
-P101FACT	7	FUNCTION	single.c	single	0	1	helper	1	0	c:@F@helper	0	0
-P101FACT	7	NOTE	single.c	single	0	3	FUNCTION_RETURN	helper	5	c:@F@helper	0	0
+P101FACT	8	FUNCTION	single.c	single	0	1	helper	1	0	c:@F@helper	0	0	int (void)	int	0
+P101FACT	8	NOTE	single.c	single	0	3	FUNCTION_RETURN	helper	5	c:@F@helper	0	0
 FACTS
 expect 0 -i "$work/single-exit.tsv"
 cat >"$work/call-result.tsv" <<'FACTS'
-P101FACT	7	FUNCTION	call-result.c	call-result	0	1	helper	1	0	c:@F@helper	0	20
-P101FACT	7	NOTE	call-result.c	call-result	0	3	CALL_NOT_ISOLATED	helper	5	c:@F@helper	4	12
+P101FACT	8	FUNCTION	call-result.c	call-result	0	1	helper	1	0	c:@F@helper	0	20	int (void)	int	0
+P101FACT	8	NOTE	call-result.c	call-result	0	3	CALL_NOT_ISOLATED	helper	5	c:@F@helper	4	12
 FACTS
 expect 1 -i "$work/call-result.tsv"
 grep -q 'P101-ERR-009' "$work/stdout"
 cat >"$work/main-exit.tsv" <<'FACTS'
-P101FACT	7	FUNCTION	main.c	main	0	1	main	1	0	c:@F@main	0	0
-P101FACT	7	CALL	main.c	main	0	3	exit	0	0	0	main	c:@F@exit	c:@F@main	0	0
+P101FACT	8	FUNCTION	main.c	main	0	1	main	1	0	c:@F@main	0	0	int (void)	int	0
+P101FACT	8	CALL	main.c	main	0	3	exit	0	0	0	main	c:@F@exit	c:@F@main	0	0
 FACTS
 expect 0 -i "$work/main-exit.tsv"
 expect 2 -i ''
@@ -134,7 +134,7 @@ printf 'P101FACT\t7\tFILE\n' >"$work/malformed.tsv"
 expect 2 -i "$work/malformed.tsv"
 {
   printf '%4095s' '' | tr ' ' x
-  printf 'tail\nP101FACT\t7\tFILE\tx\tx\t0\t0\n'
+    printf 'tail\nP101FACT\t8\tFILE\tx\tx\t0\t0\n'
 } >"$work/overlong.tsv"
 expect 0 -i "$work/overlong.tsv"
 set +e

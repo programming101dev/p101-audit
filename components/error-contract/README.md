@@ -111,7 +111,7 @@ struct p101_env   *env = p101_env_create(err, NULL);
 ## Admitted inputs
 
 The user gives source/header paths. With `-i`, the tool consumes that exact
-P101FACT v7 snapshot and does not invoke Clang again. Otherwise, it invokes
+P101FACT v8 snapshot and does not invoke Clang again. Otherwise, it invokes
 `lib_c_facts` directly over the admitted translation units. If the current
 project has a Clang build named by
 `.last-build-dir`, or a `build-clang/compile_commands.json`, that database is

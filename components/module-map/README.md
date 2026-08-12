@@ -79,7 +79,7 @@ The tool automatically uses the current project's Clang compilation database
 from `.last-build-dir` or `build-clang/compile_commands.json`. This preserves
 sibling-library include roots, feature-test macros, and other project flags.
 Use `-C` to select a different database explicitly.
-Use `-i` to consume an existing P101FACT v7 snapshot without starting another
+Use `-i` to consume an existing P101FACT v8 snapshot without starting another
 Clang AST pass. `-d:json` writes normalized findings with `id`, `severity`,
 `location`, `message`, and a playground lesson route. `-d:human,json` writes
 JSON to stdout and the Markdown overview plus compiler-style human diagnostics

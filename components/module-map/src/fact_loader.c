@@ -86,6 +86,7 @@ static void p101_module_map_apply_fact(const struct p101_env *env, struct p101_e
     {
         case P101_C_FACT_KIND_UNKNOWN:
         case P101_C_FACT_KIND_FILE:
+        case P101_C_FACT_KIND_PARAMETER:
             break;
         case P101_C_FACT_KIND_INCLUDE:
             p101_module_map_add_include(env, err, map, file, fact->value, fact->resolved, fact->line, fact->is_local);

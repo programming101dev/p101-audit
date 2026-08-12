@@ -9,10 +9,10 @@ document in sync with `libraries/lib_c_facts/README.md` when the schema changes.
 Each record has this prefix:
 
 ```text
-P101FACT<TAB>7<TAB>kind<TAB>path<TAB>module<TAB>is_header<TAB>line...
+P101FACT<TAB>8<TAB>kind<TAB>path<TAB>module<TAB>is_header<TAB>line...
 ```
 
-The version field is currently `7`, and must match `P101_C_FACT_VERSION` in
+The version field is currently `8`, and must match `P101_C_FACT_VERSION` in
 `libraries/lib_c_facts/include/p101_c_facts/facts.h`. Fields after `line` depend
 on `kind`.
 Backslash, tab, newline, and carriage-return characters inside variable fields
@@ -25,6 +25,7 @@ are escaped as `\\`, `\t`, `\n`, and `\r`.
 | `FILE` | none | A source or header file that was part of the scan. |
 | `INCLUDE` | `target`, `is_local` | A preprocessor include, where `is_local` is `1` for quoted includes. |
 | `FUNCTION` | `name`, flags, `usr`, extent | A function definition or declaration identified by Clang. |
+| `PARAMETER` | `name`, spelled/canonical types, parent function `usr`, index, extent | A parameter of a function declaration identified by type and position. |
 | `CALL` | `name`, env/error flags, indirect flag, display caller, callee/caller USRs, extent | A resolved or explicitly indirect call expression. |
 | `TYPE` | `name`, `usr` | A typedef or record declaration exposed by a header. |
 | `ENUM` | `name`, `usr` | A named enum declaration, including a typedef name for an anonymous enum. |

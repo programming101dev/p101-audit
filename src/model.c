@@ -12,6 +12,7 @@ enum
 static void deduplicate_facts(const struct p101_env *env, struct p101_wrapper_model *model);
 static void assign_macro_callers(const struct p101_env *env, struct p101_wrapper_model *model);
 static bool identity_fits(const struct p101_env *env, const char *identity, size_t size);
+static void report_oversized_field(const struct p101_env *env, const char *field, const char *value, size_t capacity);
 
 void p101_wrapper_model_init(struct p101_wrapper_model *model)
 {
@@ -70,6 +71,15 @@ static bool identity_fits(const struct p101_env *env, const char *identity, size
     return p101_expression_result_3 != 0;
 }
 
+static void report_oversized_field(const struct p101_env *env, const char *field, const char *value, size_t capacity)
+{
+    size_t length;
+
+    P101_TRACE_SCOPE(env);
+    length = p101_strlen(env, value);
+    p101_fprintf(env, P101_ERROR_OPTIONAL, stderr, "audit-facts: %s requires %zu bytes; model capacity is %zu bytes\n", field, length + 1U, capacity);
+}
+
 static bool grow_facts(const struct p101_env *env, struct p101_error *err, struct p101_wrapper_model *model)
 {
     void                     *p101_call_result_1;
@@ -99,6 +109,9 @@ bool p101_wrapper_analysis_observer(const struct p101_env *env, struct p101_erro
     int                        p101_expression_result_5;
     bool                       p101_call_result_6;
     bool                       p101_call_result_7;
+    bool                       type_fits;
+    bool                       canonical_type_fits;
+    bool                       return_type_fits;
     int                        p101_expression_result_8;
     bool                       p101_call_result_9;
     struct p101_wrapper_model *model;
@@ -131,7 +144,35 @@ bool p101_wrapper_analysis_observer(const struct p101_env *env, struct p101_erro
     }
     if(p101_expression_result_5)
     {
+        if(!p101_call_result_6)
+        {
+            report_oversized_field(env, "declaration identity", record->usr, sizeof(model->facts[0].usr));
+        }
+        else
+        {
+            report_oversized_field(env, "caller identity", record->caller_usr, sizeof(model->facts[0].caller_usr));
+        }
         P101_ERROR_RAISE_USER(err, "A resolved declaration identity is too long for the wrapper-audit model.", 1);
+        goto done;
+    }
+    type_fits           = identity_fits(env, record->type, sizeof(model->facts[0].type));
+    canonical_type_fits = identity_fits(env, record->canonical_type, sizeof(model->facts[0].canonical_type));
+    return_type_fits    = identity_fits(env, record->return_type, sizeof(model->facts[0].return_type));
+    if(!type_fits || !canonical_type_fits || !return_type_fits)
+    {
+        if(!type_fits)
+        {
+            report_oversized_field(env, "type", record->type, sizeof(model->facts[0].type));
+        }
+        else if(!canonical_type_fits)
+        {
+            report_oversized_field(env, "canonical type", record->canonical_type, sizeof(model->facts[0].canonical_type));
+        }
+        else
+        {
+            report_oversized_field(env, "return type", record->return_type, sizeof(model->facts[0].return_type));
+        }
+        P101_ERROR_RAISE_USER(err, "A resolved C type is too long for the wrapper-audit model.", 1);
         goto done;
     }
     p101_expression_result_8 = 0;
@@ -140,6 +181,7 @@ bool p101_wrapper_analysis_observer(const struct p101_env *env, struct p101_erro
         p101_call_result_9 = grow_facts(env, err, model);
         if(!p101_call_result_9)
         {
+            p101_fputs(env, P101_ERROR_OPTIONAL, "audit-facts: could not grow the semantic fact model\n", stderr);
             p101_expression_result_8 = 1;
         }
     }
@@ -154,11 +196,13 @@ bool p101_wrapper_analysis_observer(const struct p101_env *env, struct p101_erro
     fact->column           = record->column;
     fact->start            = record->start_offset;
     fact->end              = record->end_offset;
+    fact->parameter_index  = record->parameter_index;
     fact->mutation         = record->mutation;
     fact->is_header        = record->is_header;
     fact->is_definition    = record->is_definition;
     fact->is_static        = record->is_static;
     fact->is_public        = record->is_public;
+    fact->is_variadic      = record->is_variadic;
     fact->is_local_include = record->is_local_include;
     fact->is_indirect      = record->is_indirect;
     fact->needs_env        = record->has_env_parameter;
@@ -167,6 +211,8 @@ bool p101_wrapper_analysis_observer(const struct p101_env *env, struct p101_erro
     copy_field(env, fact->resolved, sizeof(fact->resolved), record->resolved_include);
     copy_field(env, fact->name, sizeof(fact->name), record->name);
     copy_field(env, fact->type, sizeof(fact->type), record->type);
+    copy_field(env, fact->canonical_type, sizeof(fact->canonical_type), record->canonical_type);
+    copy_field(env, fact->return_type, sizeof(fact->return_type), record->return_type);
     copy_field(env, fact->caller, sizeof(fact->caller), record->caller);
     copy_field(env, fact->usr, sizeof(fact->usr), record->usr);
     copy_field(env, fact->caller_usr, sizeof(fact->caller_usr), record->caller_usr);

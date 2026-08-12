@@ -152,7 +152,18 @@ if companion_comp="$(p101_companion_compiler "$comp")"; then
 fi
 
 case "$main_bd" in build-*) sfx="${main_bd#build-}" ;; *) sfx="$ccbase" ;; esac
-test_bd="test/build-${sfx}"
+test_cache_root="${P101_TEST_BUILD_CACHE:-}"
+if [ -n "$test_cache_root" ]; then
+  case "$test_cache_root" in
+    /*) ;;
+    *) test_cache_root="$PWD/$test_cache_root" ;;
+  esac
+  test_cache_root="$test_cache_root/${PWD##*/}"
+  mkdir -p "$test_cache_root/root"
+  test_bd="$test_cache_root/root/build-${sfx}"
+else
+  test_bd="test/build-${sfx}"
+fi
 if [ "$coverage" -eq 1 ]; then
   # Coverage must never retain objects for sources that were removed from the
   # test target; CMake's incremental clean rules no longer know about them.
@@ -268,7 +279,14 @@ echo ">> ctest"; ( cd "$test_bd" && ctest --output-on-failure ${ctest_args[@]+"$
 run_component_tests() {
   local component="$1"
   local component_name="${component##*/}"
-  local component_test_bd="$component/test/build-$sfx"
+  local component_test_bd
+
+  if [ -n "$test_cache_root" ]; then
+    component_test_bd="$test_cache_root/components/$component_name/build-$sfx"
+    mkdir -p "$(dirname "$component_test_bd")"
+  else
+    component_test_bd="$component/test/build-$sfx"
+  fi
 
   if [ "$coverage" -eq 1 ]; then
     rm -rf "$component_test_bd"

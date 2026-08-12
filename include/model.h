@@ -11,6 +11,7 @@ enum
 {
     P101_WRAPPER_PATH_SIZE = 4096,
     P101_WRAPPER_NAME_SIZE = 256,
+    P101_WRAPPER_TYPE_SIZE = 512,
     P101_WRAPPER_MAX_PATHS = 128,
     P101_WRAPPER_MAX_NAMES = 256
 };
@@ -63,7 +64,9 @@ struct p101_wrapper_fact
     /* The resolved file an INCLUDE reached, empty when it did not resolve. */
     char                      resolved[P101_WRAPPER_PATH_SIZE];
     char                      name[P101_WRAPPER_NAME_SIZE];
-    char                      type[P101_WRAPPER_NAME_SIZE];
+    char                      type[P101_WRAPPER_TYPE_SIZE];
+    char                      canonical_type[P101_WRAPPER_TYPE_SIZE];
+    char                      return_type[P101_WRAPPER_NAME_SIZE];
     char                      caller[P101_WRAPPER_NAME_SIZE];
     char                      usr[P101_WRAPPER_NAME_SIZE];
     char                      caller_usr[P101_WRAPPER_NAME_SIZE];
@@ -72,11 +75,13 @@ struct p101_wrapper_fact
     size_t                    column;
     size_t                    start;
     size_t                    end;
+    size_t                    parameter_index;
     enum p101_c_mutation_kind mutation;
     bool                      is_header;
     bool                      is_definition;
     bool                      is_static;
     bool                      is_public;
+    bool                      is_variadic;
     bool                      is_local_include;
     bool                      is_indirect;
     bool                      needs_env;

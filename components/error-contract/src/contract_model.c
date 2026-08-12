@@ -113,6 +113,7 @@ static void apply_fact(const struct p101_env *env, struct p101_error *err, struc
             model->files_scanned++;
             break;
         case P101_C_FACT_KIND_INCLUDE:
+        case P101_C_FACT_KIND_PARAMETER:
         case P101_C_FACT_KIND_TYPE:
         case P101_C_FACT_KIND_ENUM:
         case P101_C_FACT_KIND_ENUMERATOR:

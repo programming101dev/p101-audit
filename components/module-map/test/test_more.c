@@ -400,7 +400,7 @@ static void test_fact_loader_io_failures(void)
 
     fd     = p101_mkstemp(more_env, more_error, path);
     stream = p101_fdopen(more_env, more_error, fd, "w");
-    p101_fputs(more_env, more_error, "P101FACT\t7\tFILE\tsrc/x.c\tx\t0\t1\n", stream);
+    p101_fputs(more_env, more_error, "P101FACT\t8\tFILE\tsrc/x.c\tx\t0\t1\n", stream);
     p101_fclose(more_env, more_error, stream);
     p101_memset(more_env, &args, 0, sizeof(args));
     args.facts_path = path;
