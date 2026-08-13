@@ -70,6 +70,7 @@ struct p101_wrapper_fact
     char                      caller[P101_WRAPPER_NAME_SIZE];
     char                      usr[P101_WRAPPER_NAME_SIZE];
     char                      caller_usr[P101_WRAPPER_NAME_SIZE];
+    char                      parent_usr[P101_WRAPPER_NAME_SIZE];
     char                      replacement[P101_WRAPPER_NAME_SIZE];
     size_t                    line;
     size_t                    column;

@@ -93,8 +93,40 @@ int main(int argc, char **argv)
                     }
                     else
                     {
-                        P101_ERROR_RAISE_USER(err, "unknown workspace audit policy", EINVAL);
-                        ran = false;
+                        comparison = p101_strcmp(env, options.policy, "boundaries");
+                        if(comparison == 0)
+                        {
+                            ran = p101_workspace_audit_run_boundaries(env, err, &options, &result);
+                        }
+                        else
+                        {
+                            comparison = p101_strcmp(env, options.policy, "wrapper-unit-tests");
+                            if(comparison == 0)
+                            {
+                                ran = p101_workspace_audit_run_wrapper_unit_tests(env, err, &options, &result);
+                            }
+                            else
+                            {
+                                comparison = p101_strcmp(env, options.policy, "instrumentation");
+                                if(comparison == 0)
+                                {
+                                    ran = p101_workspace_audit_run_instrumentation(env, err, &options, &result);
+                                }
+                                else
+                                {
+                                    comparison = p101_strcmp(env, options.policy, "quality-contract");
+                                    if(comparison == 0)
+                                    {
+                                        ran = p101_workspace_audit_run_quality_contract(env, err, &options, &result);
+                                    }
+                                    else
+                                    {
+                                        P101_ERROR_RAISE_USER(err, "unknown workspace audit policy", EINVAL);
+                                        ran = false;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -126,8 +158,8 @@ static void usage(const struct p101_env *env, struct p101_error *err, const char
     p101_fprintf(env,
                  err,
                  stderr,
-                 "Usage: %s --policy POLICY [--workspace PATH] [--scripts-root PATH] [--facts PATH] [-d:human|json|human,json]\n"
-                 "Policies: functional-library-split, native-wrapper-parity, source-responsibilities, test-inventory, wrapper-fault-semantics\n",
+                 "Usage: %s --policy POLICY [--workspace PATH] [--scripts-root PATH] [--facts PATH] [--receipt PATH] [--execution-receipt PATH] [-d:human|json|human,json]\n"
+                 "Policies: boundaries, functional-library-split, instrumentation, native-wrapper-parity, quality-contract, source-responsibilities, test-inventory, wrapper-fault-semantics, wrapper-unit-tests\n",
                  program);
 }
 
@@ -187,6 +219,20 @@ static bool parse_arguments(const struct p101_env *env, struct p101_error *err, 
         {
             index++;
             options->facts_path = argv[index];
+            continue;
+        }
+        comparison = p101_strcmp(env, argv[index], "--receipt");
+        if(comparison == 0 && index + 1 < argc)
+        {
+            index++;
+            options->receipt_path = argv[index];
+            continue;
+        }
+        comparison = p101_strcmp(env, argv[index], "--execution-receipt");
+        if(comparison == 0 && index + 1 < argc)
+        {
+            index++;
+            options->execution_receipt_path = argv[index];
             continue;
         }
         comparison = p101_strncmp(env, argv[index], "-d:", 3U);

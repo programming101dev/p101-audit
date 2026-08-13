@@ -11,8 +11,9 @@ without combining their judgments into one opaque pass.
 - `audit-errors`: check error/environment ownership and control flow.
 - `audit-modules`: check module shape, public surface, and dependency direction.
 - `audit-doctor`: compose the source engines with an executable preflight.
-- `audit-workspace`: enforce cross-repository ownership, native-wrapper parity,
-  and fault-phase contracts without a Python policy process.
+- `audit-workspace`: enforce cross-repository boundaries, public-enum quality,
+  wrapper test/instrumentation coverage, ownership, parity, and fault-phase
+  contracts without a Python policy process.
 
 Run an engine from the configured build directory, or use the checked-in
 `audit-facts`, `audit-wrappers`, `audit-errors`, `audit-modules`, and
@@ -30,25 +31,34 @@ engines use the shared `p101-tool-report-v1` lifecycle and accept
 `-d:human`, `-d:json`, or `-d:human,json`; there is no separate JSON alias.
 
 `audit-workspace` admits `repos.txt`, the named workspace contracts, API and
-unit-test manifests, and AST facts produced in process by `lib_c_facts` from
-the source paths named by each policy. It emits compiler-shaped human
-diagnostics and/or `p101-tool-diagnostic-v1` JSON lines, plus a nonzero status
-when findings exist. It cannot prove behavior that is absent from those
-contracts or source inputs, and it does not replace runtime wrapper tests.
+unit-test manifests, and AST facts produced by `lib_c_facts` from the source
+paths named by each policy. Policies that accept `--facts` can reuse the
+governed `P101SEMANTIC` bundle instead of reparsing those translation units;
+the engine rejects an unknown bundle version or malformed record. It emits
+compiler-shaped human diagnostics and/or `p101-tool-diagnostic-v1` JSON lines,
+plus a nonzero status when findings exist. It cannot prove behavior that is
+absent from those contracts or source inputs, and it does not replace runtime
+wrapper tests.
 
 ## Native-policy boundary
 
-The workspace engine replaces five former Python policy processes:
+The workspace engine replaces nine former Python policy processes:
 functional-library layout, native-wrapper parity, wrapper fault semantics,
-governed test inventory, and source-responsibility boundaries. They share one
-native JSON/TSV reader, one `lib_c_facts` acquisition path, and the common
-`lib_tool_event` diagnostic writer. Their negative controls live in
+governed test inventory, source-responsibility boundaries, architecture
+boundaries, public-enum quality discovery, public wrapper unit-test coverage,
+and instrumentation coverage. They share one native JSON/TSV reader, one
+`lib_c_facts` acquisition path, one loader for the shared semantic bundle, and
+the common `lib_tool_event` diagnostic writer. Platform instrumentation
+receipts retain their byte-exact contract SHA-256 so the existing
+cross-platform merger can compare them safely.
+Their negative controls live in
 `scripts/tests/test-audit-workspace.sh` and are split into architecture and
 fault groups so the governed graph does not repeat the same scans.
 
 Python remains appropriate for the governed check-graph scheduler, repository
 lock/candidate transactions, source and test generators, external HTML
-harvesting, and the large relational quality/unit-test contracts. Those jobs
+harvesting, cross-platform receipt aggregation, and regression fixtures that
+exercise the retired implementations during the native transition. Those jobs
 primarily manipulate dynamic JSON graphs, create source, or orchestrate child
 processes; translating them to C would enlarge the trusted implementation
 without removing their dominant filesystem, compiler, or network cost. Shell

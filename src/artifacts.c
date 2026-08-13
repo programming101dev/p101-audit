@@ -1,104 +1,10 @@
+#include "instrumentation.h"
 #include "output.h"
 #include <p101_c/p101_stdio.h>
 #include <p101_c/p101_stdlib.h>
 #include <p101_c/p101_string.h>
 #include <p101_c_facts/facts.h>
 #include <stddef.h>
-
-struct instrumentation_capabilities
-{
-    bool trace_entry;
-    bool trace_exit;
-    bool fault;
-    bool fd;
-    bool allocation;
-    bool resource;
-};
-
-static void add_role_capability(const struct p101_env *env, struct instrumentation_capabilities *capabilities, const char *role)
-{
-    static const char *const ROLE_NAMES[] = {
-        "CALLEE_SEMANTIC_ROLE:p101:instrumentation:trace-entry",
-        "CALLEE_SEMANTIC_ROLE:p101:instrumentation:trace-exit",
-        "CALLEE_SEMANTIC_ROLE:p101:instrumentation:fault",
-        "CALLEE_SEMANTIC_ROLE:p101:instrumentation:fd",
-        "CALLEE_SEMANTIC_ROLE:p101:instrumentation:allocation",
-        "CALLEE_SEMANTIC_ROLE:p101:instrumentation:resource",
-    };
-
-    /* Parallel to ROLE_NAMES: each entry is the flag that role sets. */
-    bool *const ROLE_FLAGS[] = {
-        &capabilities->trace_entry,
-        &capabilities->trace_exit,
-        &capabilities->fault,
-        &capabilities->fd,
-        &capabilities->allocation,
-        &capabilities->resource,
-    };
-
-    P101_TRACE_SCOPE(env);
-    for(size_t index = 0U; index < sizeof(ROLE_NAMES) / sizeof(ROLE_NAMES[0]); index++)
-    {
-        int p101_call_result_1;
-
-        p101_call_result_1 = p101_strcmp(env, role, ROLE_NAMES[index]);
-        if(p101_call_result_1 == 0)
-        {
-            *ROLE_FLAGS[index] = true;
-            break;
-        }
-    }
-}
-
-static size_t find_function_fact(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *call)
-{
-    size_t found;
-
-    P101_TRACE_SCOPE(env);
-    found = model->fact_count;
-    for(size_t index = 0U; index < model->fact_count; index++)
-    {
-        const struct p101_wrapper_fact *candidate;
-        int                             p101_expression_result_22;
-        int                             p101_expression_result_23;
-        int                             p101_expression_result_24;
-
-        candidate                 = &model->facts[index];
-        p101_expression_result_24 = 0;
-        if(candidate->kind == P101_C_ANALYSIS_FUNCTION)
-        {
-            if(candidate->is_definition)
-            {
-                p101_expression_result_24 = 1;
-            }
-        }
-        p101_expression_result_23 = 0;
-        if(p101_expression_result_24)
-        {
-            if(call->usr[0] != '\0')
-            {
-                p101_expression_result_23 = 1;
-            }
-        }
-        p101_expression_result_22 = 0;
-        if(p101_expression_result_23)
-        {
-            int p101_call_result_25;
-
-            p101_call_result_25 = p101_strcmp(env, candidate->usr, call->usr);
-            if(p101_call_result_25 == 0)
-            {
-                p101_expression_result_22 = 1;
-            }
-        }
-        if(p101_expression_result_22)
-        {
-            found = index;
-            break;
-        }
-    }
-    return found;
-}
 
 static bool function_is_inventory_wrapper(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *function)
 {
@@ -131,268 +37,6 @@ static bool function_is_inventory_wrapper(const struct p101_env *env, const stru
 
 done:
     return wrapper;
-}
-
-static bool merge_capabilities(struct instrumentation_capabilities *destination, const struct instrumentation_capabilities *source)
-{
-    bool changed;
-
-    changed = false;
-    if(!destination->trace_entry && source->trace_entry)
-    {
-        destination->trace_entry = true;
-        changed                  = true;
-    }
-    if(!destination->trace_exit && source->trace_exit)
-    {
-        destination->trace_exit = true;
-        changed                 = true;
-    }
-    if(!destination->fault && source->fault)
-    {
-        destination->fault = true;
-        changed            = true;
-    }
-    if(!destination->fd && source->fd)
-    {
-        destination->fd = true;
-        changed         = true;
-    }
-    if(!destination->allocation && source->allocation)
-    {
-        destination->allocation = true;
-        changed                 = true;
-    }
-    if(!destination->resource && source->resource)
-    {
-        destination->resource = true;
-        changed               = true;
-    }
-    return changed;
-}
-
-static size_t find_calling_function(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *call)
-{
-    int    p101_expression_result_28;
-    int    p101_expression_result_29;
-    int    p101_call_result_30;
-    int    p101_expression_result_31;
-    int    p101_call_result_32;
-    size_t nearest;
-
-    P101_TRACE_SCOPE(env);
-    nearest = model->fact_count;
-    for(size_t index = 0U; index < model->fact_count; index++)
-    {
-        const struct p101_wrapper_fact *candidate;
-
-        candidate = &model->facts[index];
-        if(candidate->kind != P101_C_ANALYSIS_FUNCTION)
-        {
-            p101_expression_result_29 = 1;
-        }
-        else
-        {
-            if(!candidate->is_definition)
-            {
-                p101_expression_result_29 = 1;
-            }
-            else
-            {
-                p101_expression_result_29 = 0;
-            }
-        }
-        if(p101_expression_result_29)
-        {
-            p101_expression_result_28 = 1;
-        }
-        else
-        {
-            p101_call_result_30 = p101_strcmp(env, candidate->path, call->path);
-            if(p101_call_result_30 != 0)
-            {
-                p101_expression_result_28 = 1;
-            }
-            else
-            {
-                p101_expression_result_28 = 0;
-            }
-        }
-        if(p101_expression_result_28)
-        {
-            continue;
-        }
-        p101_expression_result_31 = 0;
-        if(call->caller_usr[0] != '\0')
-        {
-            p101_call_result_32 = p101_strcmp(env, candidate->usr, call->caller_usr);
-            if(p101_call_result_32 == 0)
-            {
-                p101_expression_result_31 = 1;
-            }
-        }
-        if(p101_expression_result_31)
-        {
-            nearest = index;
-            break;
-        }
-        /*
-         * Detailed preprocessing records are not children of the function
-         * cursor, so libclang cannot supply their semantic caller. Associate
-         * a macro expansion only when its expansion offset is inside the
-         * resolved function definition's source extent.
-         */
-        if(call->caller_usr[0] == '\0' && call->start >= candidate->start && call->start < candidate->end)
-        {
-            nearest = index;
-            break;
-        }
-    }
-    return nearest;
-}
-
-static size_t find_function_at_source_location(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *fact)
-{
-    size_t nearest;
-
-    P101_TRACE_SCOPE(env);
-    nearest = model->fact_count;
-    for(size_t index = 0U; index < model->fact_count; index++)
-    {
-        const struct p101_wrapper_fact *candidate;
-        int                             p101_expression_result_33;
-        int                             p101_expression_result_34;
-        int                             p101_expression_result_35;
-        int                             p101_expression_result_36;
-
-        candidate                 = &model->facts[index];
-        p101_expression_result_36 = 0;
-        if(candidate->kind == P101_C_ANALYSIS_FUNCTION)
-        {
-            if(candidate->is_definition)
-            {
-                p101_expression_result_36 = 1;
-            }
-        }
-        p101_expression_result_35 = 0;
-        if(p101_expression_result_36)
-        {
-            int p101_call_result_37;
-
-            p101_call_result_37 = p101_strcmp(env, candidate->path, fact->path);
-            if(p101_call_result_37 == 0)
-            {
-                p101_expression_result_35 = 1;
-            }
-        }
-        p101_expression_result_34 = 0;
-        if(p101_expression_result_35)
-        {
-            if(fact->start >= candidate->start)
-            {
-                p101_expression_result_34 = 1;
-            }
-        }
-        p101_expression_result_33 = 0;
-        if(p101_expression_result_34)
-        {
-            if(fact->start < candidate->end)
-            {
-                p101_expression_result_33 = 1;
-            }
-        }
-        if(p101_expression_result_33)
-        {
-            nearest = index;
-            break;
-        }
-    }
-    return nearest;
-}
-
-static void collect_capabilities(const struct p101_env *env, const struct p101_wrapper_model *model, struct instrumentation_capabilities *capabilities)
-{
-    int  p101_expression_result_42;
-    bool p101_call_result_43;
-    bool changed;
-
-    P101_TRACE_SCOPE(env);
-    for(size_t index = 0U; index < model->fact_count; index++)
-    {
-        const struct p101_wrapper_fact *fact;
-        enum p101_c_note_kind           p101_call_result_39;
-        size_t                          function;
-        bool                            is_trace_scope;
-
-        fact = &model->facts[index];
-        if(fact->kind != P101_C_ANALYSIS_CALL && fact->kind != P101_C_ANALYSIS_NOTE)
-        {
-            continue;
-        }
-        p101_call_result_39 = P101_C_NOTE_OTHER;
-        if(fact->kind == P101_C_ANALYSIS_NOTE)
-        {
-            p101_call_result_39 = p101_c_note_kind_from_name(env, fact->name);
-        }
-        is_trace_scope = p101_call_result_39 == P101_C_NOTE_TRACE_USE;
-        if(is_trace_scope)
-        {
-            function = find_function_at_source_location(env, model, fact);
-        }
-        else
-        {
-            function = find_calling_function(env, model, fact);
-        }
-        if(function == model->fact_count)
-        {
-            continue;
-        }
-        if(is_trace_scope)
-        {
-            capabilities[function].trace_entry = true;
-            capabilities[function].trace_exit  = true;
-        }
-        else if(fact->kind == P101_C_ANALYSIS_NOTE)
-        {
-            add_role_capability(env, &capabilities[function], fact->name);
-        }
-    }
-
-    do
-    {
-        changed = false;
-        for(size_t index = 0U; index < model->fact_count; index++)
-        {
-            const struct p101_wrapper_fact *call;
-            size_t                          caller;
-            size_t                          callee;
-
-            call = &model->facts[index];
-            if(call->kind != P101_C_ANALYSIS_CALL)
-            {
-                continue;
-            }
-            caller = find_calling_function(env, model, call);
-            if(caller == model->fact_count)
-            {
-                continue;
-            }
-            callee                    = find_function_fact(env, model, call);
-            p101_expression_result_42 = 0;
-            if(callee != model->fact_count)
-            {
-                p101_call_result_43 = merge_capabilities(&capabilities[caller], &capabilities[callee]);
-                if(p101_call_result_43)
-                {
-                    p101_expression_result_42 = 1;
-                }
-            }
-            if(p101_expression_result_42)
-            {
-                changed = true;
-            }
-        }
-    } while(changed);
 }
 
 static bool write_facts_file(const struct p101_env *env, struct p101_error *err, const struct p101_wrapper_model *model, const char *path)
@@ -549,24 +193,24 @@ done:
 
 static bool write_instrumentation(const struct p101_env *env, struct p101_error *err, const struct p101_wrapper_model *model, const char *path)
 {
-    int                                  p101_expression_result_44;
-    bool                                 p101_call_result_45;
-    void                                *p101_call_result_6;
-    bool                                 p101_call_result_7;
-    const char                          *p101_call_result_8;
-    const char                          *p101_call_result_9;
-    const char                          *p101_call_result_10;
-    const char                          *p101_call_result_11;
-    const char                          *p101_call_result_12;
-    const char                          *p101_call_result_13;
-    const char                          *p101_call_result_14;
-    const char                          *p101_call_result_15;
-    const char                          *p101_call_result_16;
-    FILE                                *stream;
-    struct instrumentation_capabilities *capabilities;
-    size_t                               index;
-    bool                                 first;
-    bool                                 success;
+    int                                       p101_expression_result_44;
+    bool                                      p101_call_result_45;
+    void                                     *p101_call_result_6;
+    bool                                      p101_call_result_7;
+    const char                               *p101_call_result_8;
+    const char                               *p101_call_result_9;
+    const char                               *p101_call_result_10;
+    const char                               *p101_call_result_11;
+    const char                               *p101_call_result_12;
+    const char                               *p101_call_result_13;
+    const char                               *p101_call_result_14;
+    const char                               *p101_call_result_15;
+    const char                               *p101_call_result_16;
+    FILE                                     *stream;
+    struct p101_instrumentation_capabilities *capabilities;
+    size_t                                    index;
+    bool                                      first;
+    bool                                      success;
 
     capabilities = NULL;
     success      = false;
@@ -578,13 +222,17 @@ static bool write_instrumentation(const struct p101_env *env, struct p101_error 
     if(model->fact_count > 0U)
     {
         p101_call_result_6 = p101_calloc(env, err, model->fact_count, sizeof(*capabilities));
-        capabilities       = (struct instrumentation_capabilities *)p101_call_result_6;
+        capabilities       = (struct p101_instrumentation_capabilities *)p101_call_result_6;
     }
     if(model->fact_count > 0U && capabilities == NULL)
     {
         goto done;
     }
-    collect_capabilities(env, model, capabilities);
+    p101_call_result_7 = p101_instrumentation_collect(env, err, model, capabilities);
+    if(!p101_call_result_7)
+    {
+        goto done;
+    }
     p101_fputs(env, err, "{\"schema\":\"p101-instrumentation-coverage-v1\",\"producer\":\"audit-wrappers\",\"functions\":[", stream);
     first = true;
     for(index = 0U; index < model->fact_count; index++)

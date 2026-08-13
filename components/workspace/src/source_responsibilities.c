@@ -1,6 +1,7 @@
 #include "model.h"
 #include "workspace_analysis.h"
 #include "workspace_audit.h"
+#include "workspace_fact_bundle.h"
 #include "workspace_json.h"
 #include <dirent.h>
 #include <errno.h>
@@ -9,7 +10,6 @@
 #include <p101_c/p101_string.h>
 #include <p101_filesystem/p101_dirent.h>
 #include <p101_filesystem/sys/p101_stat.h>
-#include <p101_record/record.h>
 
 enum
 {
@@ -39,9 +39,6 @@ static bool   validate_dependencies(const struct p101_env *env, struct p101_erro
 static bool   config_has_target(const struct p101_env *env, const char *text, const char *target);
 static bool   include_target(const struct p101_env *env, const char *include_name, char *target, size_t target_size);
 static size_t count_lines(const char *text);
-static bool   load_fact_bundle(const struct p101_env *env, struct p101_error *err, const char *path, struct p101_wrapper_model *model);
-static enum p101_c_analysis_kind analysis_kind(const struct p101_env *env, const char *text);
-static bool                      copy_bundle_field(const struct p101_env *env, struct p101_error *err, char *output, size_t output_size, const char *input);
 
 bool p101_workspace_audit_run_source_responsibilities(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, struct p101_workspace_audit_result *result)
 {
@@ -133,7 +130,7 @@ bool p101_workspace_audit_run_source_responsibilities(const struct p101_env *env
     arguments.keep_going = true;
     if(options->facts_path != NULL)
     {
-        scanned = load_fact_bundle(env, err, options->facts_path, &model);
+        scanned = p101_workspace_fact_bundle_load(env, err, options->facts_path, &model);
     }
     else
     {
@@ -767,164 +764,4 @@ static size_t count_lines(const char *text)
         text++;
     }
     return lines;
-}
-
-static bool load_fact_bundle(const struct p101_env *env, struct p101_error *err, const char *path, struct p101_wrapper_model *model)
-{
-    enum
-    {
-        BUNDLE_FIELD_COUNT = 7
-    };
-
-    char                     *text;
-    char                     *line;
-    char                     *next_line;
-    char                     *records;
-    char                     *cursor;
-    const char               *line_end;
-    char                     *fields[BUNDLE_FIELD_COUNT];
-    struct p101_wrapper_fact *fact;
-    size_t                    length;
-    size_t                    count;
-    size_t                    field_index;
-    int                       parse_status;
-    bool                      loaded;
-    bool                      copied;
-
-    text   = NULL;
-    length = 0U;
-    loaded = p101_workspace_audit_read_file(env, err, path, &text, &length);
-    if(!loaded)
-    {
-        goto done;
-    }
-    line     = text;
-    line_end = p101_strchr(env, line, '\n');
-    if(line_end == NULL)
-    {
-        P101_ERROR_RAISE_USER(err, "invalid semantic fact bundle", EINVAL);
-        loaded = false;
-        goto done;
-    }
-    next_line  = line + (size_t)(line_end - line);
-    *next_line = '\0';
-    if(p101_strcmp(env, line, "P101SEMANTIC\t1") != 0)
-    {
-        P101_ERROR_RAISE_USER(err, "invalid semantic fact bundle", EINVAL);
-        loaded = false;
-        goto done;
-    }
-    count   = 0U;
-    records = next_line + 1;
-    line    = records;
-    while(*line != '\0')
-    {
-        count++;
-        line_end = p101_strchr(env, line, '\n');
-        if(line_end == NULL)
-        {
-            break;
-        }
-        next_line = line + (size_t)(line_end - line);
-        line      = next_line + 1;
-    }
-    model->facts = (struct p101_wrapper_fact *)p101_calloc(env, err, count, sizeof(*model->facts));
-    if(model->facts == NULL)
-    {
-        loaded = false;
-        goto done;
-    }
-    model->fact_capacity = count;
-    line                 = records;
-    while(*line != '\0')
-    {
-        line_end = p101_strchr(env, line, '\n');
-        if(line_end != NULL)
-        {
-            next_line  = line + (size_t)(line_end - line);
-            *next_line = '\0';
-        }
-        else
-        {
-            next_line = NULL;
-        }
-        cursor = line;
-        for(field_index = 0U; field_index < BUNDLE_FIELD_COUNT; field_index++)
-        {
-            fields[field_index] = p101_record_split(&cursor);
-            if(fields[field_index] != NULL)
-            {
-                p101_record_unescape_field(fields[field_index]);
-            }
-        }
-        if(fields[BUNDLE_FIELD_COUNT - 1U] == NULL || cursor != NULL)
-        {
-            P101_ERROR_RAISE_USER(err, "invalid semantic fact record", EINVAL);
-            loaded = false;
-            goto done;
-        }
-        fact         = &model->facts[model->fact_count];
-        fact->kind   = analysis_kind(env, fields[0]);
-        copied       = copy_bundle_field(env, err, fact->path, sizeof(fact->path), fields[1]);
-        copied       = copy_bundle_field(env, err, fact->name, sizeof(fact->name), fields[2]) && copied;
-        copied       = copy_bundle_field(env, err, fact->usr, sizeof(fact->usr), fields[3]) && copied;
-        copied       = copy_bundle_field(env, err, fact->caller_usr, sizeof(fact->caller_usr), fields[4]) && copied;
-        copied       = copy_bundle_field(env, err, fact->resolved, sizeof(fact->resolved), fields[5]) && copied;
-        parse_status = p101_record_parse_size(fields[6], &fact->line);
-        if(!copied || parse_status == 0)
-        {
-            P101_ERROR_RAISE_USER(err, "invalid semantic fact field", EINVAL);
-            loaded = false;
-            goto done;
-        }
-        model->fact_count++;
-        if(next_line == NULL)
-        {
-            break;
-        }
-        line = next_line + 1;
-    }
-    loaded = true;
-
-done:
-    p101_free(env, text);
-    return loaded;
-}
-
-static enum p101_c_analysis_kind analysis_kind(const struct p101_env *env, const char *text)
-{
-    static const char *const  names[] = {"FILE", "INCLUDE", "FUNCTION", "PARAMETER", "CALL", "TYPE", "ENUM", "ENUMERATOR", "MACRO", "NOTE", "MUTATION", "DIAGNOSTIC"};
-    size_t                    index;
-    int                       comparison;
-    enum p101_c_analysis_kind kind;
-
-    kind = P101_C_ANALYSIS_DIAGNOSTIC;
-    for(index = 0U; index < sizeof(names) / sizeof(names[0]); index++)
-    {
-        comparison = p101_strcmp(env, text, names[index]);
-        if(comparison == 0)
-        {
-            kind = (enum p101_c_analysis_kind)index;
-            break;
-        }
-    }
-    return kind;
-}
-
-static bool copy_bundle_field(const struct p101_env *env, struct p101_error *err, char *output, size_t output_size, const char *input)
-{
-    size_t length;
-    bool   copied;
-
-    length = p101_strlen(env, input);
-    copied = length < output_size;
-    if(copied)
-    {
-        p101_memcpy(env, output, input, length + 1U);
-    }
-    else
-    {
-        P101_ERROR_RAISE_ERRNO(err, EOVERFLOW);
-    }
-    return copied;
 }

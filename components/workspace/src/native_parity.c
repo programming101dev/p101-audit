@@ -1,6 +1,7 @@
 #include "model.h"
 #include "workspace_analysis.h"
 #include "workspace_audit.h"
+#include "workspace_fact_bundle.h"
 #include <errno.h>
 #include <p101_c/p101_stdio.h>
 #include <p101_c/p101_stdlib.h>
@@ -33,6 +34,7 @@ struct parity_row
 static size_t split_fields(char *line, char **fields, size_t capacity);
 static bool   copy_text(const struct p101_env *env, struct p101_error *err, char *destination, size_t capacity, const char *source);
 static bool   manifest_has_identity(const struct p101_env *env, struct p101_error *err, const char *path, const char *identity);
+static bool   row_has_lowered_pair(const struct p101_env *env, const struct p101_wrapper_model *model, const struct parity_row *row, const char *caller_identity, size_t source_line);
 static bool   row_has_pair(const struct p101_env *env, const struct p101_wrapper_model *model, const struct parity_row *row);
 
 bool p101_workspace_audit_run_native_parity(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, struct p101_workspace_audit_result *result)
@@ -227,12 +229,19 @@ close_stream:
         goto done;
     }
     arguments.keep_going = true;
-    prepared             = p101_workspace_audit_prepare_analysis(env, err, options, &arguments, analysis_arguments, P101_WORKSPACE_ANALYSIS_ARGUMENT_CAPACITY);
-    if(!prepared)
+    if(options->facts_path != NULL)
     {
-        goto done;
+        scanned = p101_workspace_fact_bundle_load(env, err, options->facts_path, &model);
     }
-    scanned = p101_wrapper_model_scan(env, err, &model, &arguments);
+    else
+    {
+        prepared = p101_workspace_audit_prepare_analysis(env, err, options, &arguments, analysis_arguments, P101_WORKSPACE_ANALYSIS_ARGUMENT_CAPACITY);
+        if(!prepared)
+        {
+            goto done;
+        }
+        scanned = p101_wrapper_model_scan(env, err, &model, &arguments);
+    }
     if(!scanned)
     {
         goto done;
@@ -346,63 +355,112 @@ done:
 
 static bool row_has_pair(const struct p101_env *env, const struct p101_wrapper_model *model, const struct parity_row *row)
 {
-    size_t caller_index;
-    size_t fact_index;
-    bool   wrapper_seen;
-    bool   native_seen;
-    bool   matched;
-    int    comparison;
+    const char *caller_identity;
+    size_t      fact_index;
+    size_t      candidate_index;
+    bool        native_seen;
+    bool        matched;
+    int         comparison;
 
     matched = false;
-    for(caller_index = 0U; caller_index < model->fact_count && !matched; caller_index++)
+    for(fact_index = 0U; fact_index < model->fact_count && !matched; fact_index++)
     {
-        const struct p101_wrapper_fact *caller_fact;
+        const struct p101_wrapper_fact *fact;
 
-        caller_fact = &model->facts[caller_index];
-        if(caller_fact->caller_usr[0] == '\0')
+        fact = &model->facts[fact_index];
+        if(fact->kind != P101_C_ANALYSIS_CALL || fact->caller_usr[0] == '\0')
         {
             continue;
         }
-        comparison = p101_strcmp(env, caller_fact->path, row->source);
+        comparison = p101_strcmp(env, fact->path, row->source);
         if(comparison != 0)
         {
             continue;
         }
-        wrapper_seen = false;
-        native_seen  = false;
-        for(fact_index = 0U; fact_index < model->fact_count; fact_index++)
+        comparison = p101_strcmp(env, fact->usr, row->wrapper_usr);
+        if(comparison == 0)
         {
-            const struct p101_wrapper_fact *fact;
-            int                             caller_comparison;
+            caller_identity = fact->caller_usr;
+            native_seen     = false;
+            for(candidate_index = 0U; candidate_index < model->fact_count && !native_seen; candidate_index++)
+            {
+                const struct p101_wrapper_fact *candidate;
+                int                             caller_comparison;
 
-            fact              = &model->facts[fact_index];
-            caller_comparison = p101_strcmp(env, fact->caller_usr, caller_fact->caller_usr);
-            if(caller_comparison != 0)
+                candidate         = &model->facts[candidate_index];
+                caller_comparison = p101_strcmp(env, candidate->caller_usr, caller_identity);
+                if(caller_comparison != 0)
+                {
+                    continue;
+                }
+                comparison = p101_strcmp(env, candidate->usr, row->native_usr);
+                if(candidate->kind == P101_C_ANALYSIS_CALL && comparison == 0)
+                {
+                    native_seen = true;
+                }
+                comparison = p101_strcmp(env, candidate->replacement, row->native);
+                if(candidate->kind == P101_C_ANALYSIS_MACRO && !candidate->is_definition && comparison == 0)
+                {
+                    native_seen = true;
+                }
+                comparison = p101_strcmp(env, candidate->name, row->native);
+                if(candidate->kind == P101_C_ANALYSIS_MACRO && !candidate->is_definition && comparison == 0)
+                {
+                    native_seen = true;
+                }
+            }
+            if(!native_seen)
+            {
+                native_seen = row_has_lowered_pair(env, model, row, caller_identity, fact->line);
+            }
+            matched = native_seen;
+        }
+    }
+    return matched;
+}
+
+static bool row_has_lowered_pair(const struct p101_env *env, const struct p101_wrapper_model *model, const struct parity_row *row, const char *caller_identity, size_t source_line)
+{
+    size_t wrapper_index;
+    size_t test_index;
+    bool   matched;
+    int    comparison;
+
+    matched = false;
+    for(wrapper_index = 0U; wrapper_index < model->fact_count && !matched; wrapper_index++)
+    {
+        const struct p101_wrapper_fact *wrapper_call;
+
+        wrapper_call = &model->facts[wrapper_index];
+        if(wrapper_call->kind != P101_C_ANALYSIS_CALL)
+        {
+            continue;
+        }
+        comparison = p101_strcmp(env, wrapper_call->caller_usr, row->wrapper_usr);
+        if(comparison != 0)
+        {
+            continue;
+        }
+        for(test_index = 0U; test_index < model->fact_count && !matched; test_index++)
+        {
+            const struct p101_wrapper_fact *test_call;
+            int                             caller_comparison;
+            int                             identity_comparison;
+            int                             wrapper_comparison;
+
+            test_call = &model->facts[test_index];
+            if(test_call->kind != P101_C_ANALYSIS_CALL || test_call->line != source_line)
             {
                 continue;
             }
-            comparison = p101_strcmp(env, fact->usr, row->wrapper_usr);
-            if(fact->kind == P101_C_ANALYSIS_CALL && comparison == 0)
+            caller_comparison   = p101_strcmp(env, test_call->caller_usr, caller_identity);
+            identity_comparison = p101_strcmp(env, test_call->usr, wrapper_call->usr);
+            wrapper_comparison  = p101_strcmp(env, test_call->usr, row->wrapper_usr);
+            if(caller_comparison == 0 && identity_comparison == 0 && wrapper_comparison != 0)
             {
-                wrapper_seen = true;
-            }
-            comparison = p101_strcmp(env, fact->usr, row->native_usr);
-            if(fact->kind == P101_C_ANALYSIS_CALL && comparison == 0)
-            {
-                native_seen = true;
-            }
-            comparison = p101_strcmp(env, fact->replacement, row->native);
-            if(fact->kind == P101_C_ANALYSIS_MACRO && !fact->is_definition && comparison == 0)
-            {
-                native_seen = true;
-            }
-            comparison = p101_strcmp(env, fact->name, row->native);
-            if(fact->kind == P101_C_ANALYSIS_MACRO && !fact->is_definition && comparison == 0)
-            {
-                native_seen = true;
+                matched = true;
             }
         }
-        matched = (wrapper_seen && native_seen) != 0;
     }
     return matched;
 }

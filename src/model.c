@@ -216,6 +216,10 @@ bool p101_wrapper_analysis_observer(const struct p101_env *env, struct p101_erro
     copy_field(env, fact->caller, sizeof(fact->caller), record->caller);
     copy_field(env, fact->usr, sizeof(fact->usr), record->usr);
     copy_field(env, fact->caller_usr, sizeof(fact->caller_usr), record->caller_usr);
+    if(record->kind == P101_C_ANALYSIS_ENUMERATOR)
+    {
+        copy_field(env, fact->parent_usr, sizeof(fact->parent_usr), record->caller_usr);
+    }
     copy_field(env, fact->replacement, sizeof(fact->replacement), record->replacement);
     keep_going = true;
 

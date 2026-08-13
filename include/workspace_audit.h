@@ -18,6 +18,8 @@ struct p101_workspace_audit_options
     const char  *scripts_root;
     const char  *policy;
     const char  *facts_path;
+    const char  *receipt_path;
+    const char  *execution_receipt_path;
     unsigned int outputs;
 };
 
@@ -46,6 +48,10 @@ bool p101_workspace_audit_run_native_parity(const struct p101_env *env, struct p
 bool p101_workspace_audit_run_fault_semantics(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, struct p101_workspace_audit_result *result);
 bool p101_workspace_audit_run_test_inventory(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, struct p101_workspace_audit_result *result);
 bool p101_workspace_audit_run_source_responsibilities(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, struct p101_workspace_audit_result *result);
+bool p101_workspace_audit_run_boundaries(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, struct p101_workspace_audit_result *result);
+bool p101_workspace_audit_run_wrapper_unit_tests(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, struct p101_workspace_audit_result *result);
+bool p101_workspace_audit_run_instrumentation(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, struct p101_workspace_audit_result *result);
+bool p101_workspace_audit_run_quality_contract(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, struct p101_workspace_audit_result *result);
 void p101_workspace_audit_write(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const struct p101_workspace_audit_result *result);
 
 #endif

@@ -51,6 +51,7 @@ endforeach()
 set(_COMMON_SOURCES
         ../src/artifacts.c
         ../src/cli.c
+        ../src/instrumentation.c
         ../src/inventory.c
         ../src/judge.c
         ../src/judge_support.c

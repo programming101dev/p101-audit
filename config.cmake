@@ -27,6 +27,7 @@ set(audit_workspace_OUTPUT_NAME audit-workspace)
 
 set(audit_wrappers_SOURCES
         src/artifacts.c
+        src/instrumentation.c
         src/cli.c
         src/inventory.c
         src/judge.c
@@ -37,6 +38,7 @@ set(audit_wrappers_SOURCES
 )
 set(audit_facts_SOURCES
         src/artifacts.c
+        src/instrumentation.c
         src/cli.c
         src/facts_main.c
         src/inventory.c
@@ -47,6 +49,12 @@ set(audit_facts_SOURCES
 )
 set(audit_workspace_SOURCES
         components/workspace/src/common.c
+    components/workspace/src/fact_bundle.c
+    components/workspace/src/boundaries.c
+    components/workspace/src/instrumentation.c
+    components/workspace/src/quality_contract.c
+    components/workspace/src/sha256.c
+    components/workspace/src/wrapper_unit_tests.c
         components/workspace/src/fault_semantics.c
         components/workspace/src/functional_layout.c
         components/workspace/src/json.c
@@ -54,7 +62,9 @@ set(audit_workspace_SOURCES
         components/workspace/src/native_parity.c
         components/workspace/src/source_responsibilities.c
         components/workspace/src/test_inventory.c
+        src/instrumentation.c
         src/model.c
+        src/output.c
 )
 set(audit_errors_SOURCES
         components/error-contract/src/cli.c
@@ -91,11 +101,13 @@ set(audit_doctor_SOURCES
 )
 
 set(audit_wrappers_HEADERS
+        include/instrumentation.h
         include/model.h
         include/output.h
         include/cli.h
 )
 set(audit_facts_HEADERS
+        include/instrumentation.h
         include/model.h
         include/output.h
         include/cli.h
@@ -104,7 +116,10 @@ file(GLOB audit_errors_HEADERS CONFIGURE_DEPENDS components/error-contract/inclu
 file(GLOB audit_modules_HEADERS CONFIGURE_DEPENDS components/module-map/include/*.h)
 file(GLOB audit_doctor_HEADERS CONFIGURE_DEPENDS components/doctor/include/*.h)
 set(audit_workspace_HEADERS
+        include/instrumentation.h
         include/workspace_audit.h
+        include/workspace_fact_bundle.h
+        include/workspace_sha256.h
         include/workspace_analysis.h
         include/workspace_json.h
 )
