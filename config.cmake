@@ -16,13 +16,14 @@ set(DARWIN_STANDARD_FLAGS -D_DARWIN_C_SOURCE)
 set(LINUX_STANDARD_FLAGS)
 set(BSD_STANDARD_FLAGS)
 
-set(EXECUTABLE_TARGETS audit_wrappers audit_facts audit_errors audit_modules audit_doctor)
+set(EXECUTABLE_TARGETS audit_wrappers audit_facts audit_errors audit_modules audit_doctor audit_workspace)
 set(LIBRARY_TARGETS "")
 set(audit_wrappers_OUTPUT_NAME audit-wrappers)
 set(audit_facts_OUTPUT_NAME audit-facts)
 set(audit_errors_OUTPUT_NAME audit-errors)
 set(audit_modules_OUTPUT_NAME audit-modules)
 set(audit_doctor_OUTPUT_NAME audit-doctor)
+set(audit_workspace_OUTPUT_NAME audit-workspace)
 
 set(audit_wrappers_SOURCES
         src/artifacts.c
@@ -43,6 +44,17 @@ set(audit_facts_SOURCES
         src/judge_support.c
         src/model.c
         src/output.c
+)
+set(audit_workspace_SOURCES
+        components/workspace/src/common.c
+        components/workspace/src/fault_semantics.c
+        components/workspace/src/functional_layout.c
+        components/workspace/src/json.c
+        components/workspace/src/main.c
+        components/workspace/src/native_parity.c
+        components/workspace/src/source_responsibilities.c
+        components/workspace/src/test_inventory.c
+        src/model.c
 )
 set(audit_errors_SOURCES
         components/error-contract/src/cli.c
@@ -91,6 +103,11 @@ set(audit_facts_HEADERS
 file(GLOB audit_errors_HEADERS CONFIGURE_DEPENDS components/error-contract/include/*.h)
 file(GLOB audit_modules_HEADERS CONFIGURE_DEPENDS components/module-map/include/*.h)
 file(GLOB audit_doctor_HEADERS CONFIGURE_DEPENDS components/doctor/include/*.h)
+set(audit_workspace_HEADERS
+        include/workspace_audit.h
+        include/workspace_analysis.h
+        include/workspace_json.h
+)
 
 set(P101_WRAPPER_AUDIT_LIBRARIES
         p101_error
@@ -123,3 +140,4 @@ set(P101_AUDIT_POLICY_LIBRARIES
 set(audit_errors_LINK_LIBRARIES ${P101_AUDIT_POLICY_LIBRARIES})
 set(audit_modules_LINK_LIBRARIES ${P101_AUDIT_POLICY_LIBRARIES})
 set(audit_doctor_LINK_LIBRARIES ${P101_AUDIT_POLICY_LIBRARIES})
+set(audit_workspace_LINK_LIBRARIES ${P101_AUDIT_POLICY_LIBRARIES})
