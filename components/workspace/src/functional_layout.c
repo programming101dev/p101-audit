@@ -310,12 +310,13 @@ done:
 static bool path_set_contains(const struct p101_env *env, const struct path_set *set, const char *path)
 {
     size_t index;
-    int    comparison;
     bool   present;
 
     present = false;
     for(index = 0U; index < set->count && !present; index++)
     {
+        int comparison;
+
         comparison = p101_strcmp(env, set->items[index], path);
         present    = comparison == 0;
     }
@@ -410,21 +411,21 @@ done:
 
 static bool collect_files(const struct p101_env *env, struct p101_error *err, const char *root, const char *relative, const char *suffix, struct path_set *set)    // NOLINT(misc-no-recursion): bounded workspace tree walk.
 {
-    char           directory_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
-    char           child_relative[P101_WORKSPACE_AUDIT_PATH_SIZE];
-    char           child_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
-    DIR           *directory;
-    struct dirent *entry;
-    bool           joined;
-    bool           collected;
-    bool           nested;
-    bool           is_directory;
-    int            close_status;
-    size_t         name_length;
-    size_t         suffix_length;
-    int            comparison;
-    int            stat_status;
-    struct stat    status_buffer;
+    char                 directory_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
+    char                 child_relative[P101_WORKSPACE_AUDIT_PATH_SIZE];
+    char                 child_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
+    DIR                 *directory;
+    const struct dirent *entry;
+    bool                 joined;
+    bool                 collected;
+    bool                 nested;
+    bool                 is_directory;
+    int                  close_status;
+    size_t               name_length;
+    size_t               suffix_length;
+    int                  comparison;
+    int                  stat_status;
+    struct stat          status_buffer;
 
     collected = false;
     joined    = p101_workspace_audit_join(env, err, directory_path, sizeof(directory_path), root, relative);
@@ -527,7 +528,7 @@ static bool collect_central_identities(const struct p101_env *env, struct p101_e
     (void)p101_fgets(env, err, line, sizeof(line), stream);
     while(true)
     {
-        char *read_result;
+        const char *read_result;
 
         read_result = p101_fgets(env, err, line, sizeof(line), stream);
         if(read_result == NULL)
@@ -627,7 +628,7 @@ static bool validate_domain(const struct p101_env *env, struct p101_error *err, 
     p101_fgets(env, err, line, sizeof(line), stream);
     while(true)
     {
-        char *read_result;
+        const char *read_result;
 
         read_result = p101_fgets(env, err, line, sizeof(line), stream);
         if(read_result == NULL)
@@ -886,23 +887,23 @@ done:
 
 static bool scan_retired_references(const struct p101_env *env, struct p101_error *err, const char *root, const char *relative, struct p101_workspace_audit_result *result)    // NOLINT(misc-no-recursion): bounded workspace tree walk.
 {
-    char           directory_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
-    char           child_relative[P101_WORKSPACE_AUDIT_PATH_SIZE];
-    char           child_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
-    DIR           *directory;
-    struct dirent *entry;
-    bool           joined;
-    bool           scanned;
-    bool           nested;
-    bool           inspect;
-    bool           is_directory;
-    char          *text;
-    size_t         length;
-    const char    *match;
-    int            comparison;
-    int            close_status;
-    int            stat_status;
-    struct stat    status_buffer;
+    char                 directory_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
+    char                 child_relative[P101_WORKSPACE_AUDIT_PATH_SIZE];
+    char                 child_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
+    DIR                 *directory;
+    const struct dirent *entry;
+    bool                 joined;
+    bool                 scanned;
+    bool                 nested;
+    bool                 inspect;
+    bool                 is_directory;
+    char                *text;
+    size_t               length;
+    const char          *match;
+    int                  comparison;
+    int                  close_status;
+    int                  stat_status;
+    struct stat          status_buffer;
 
     scanned = false;
     joined  = p101_workspace_audit_join(env, err, directory_path, sizeof(directory_path), root, relative);
@@ -1041,12 +1042,13 @@ static bool should_scan_text(const struct p101_env *env, const char *name)
 {
     const char *extension;
     bool        scan;
-    int         comparison;
 
     extension = p101_strrchr(env, name, '.');
     scan      = false;
     if(extension != NULL)
     {
+        int comparison;
+
         comparison = p101_strcmp(env, extension, ".c");
         scan       = comparison == 0;
         if(!scan)
@@ -1078,10 +1080,8 @@ static bool text_has_retired_target(const struct p101_env *env, const char *text
     static const char *const targets[] = {"p101_posix", "p101_posix_optional", "p101_posix_xsi", "p101_unix"};
     const char              *cursor;
     const char              *line_end;
-    const char              *trimmed_end;
     size_t                   index;
     size_t                   target_size;
-    size_t                   line_size;
     int                      comparison;
     bool                     found;
 
@@ -1089,6 +1089,9 @@ static bool text_has_retired_target(const struct p101_env *env, const char *text
     found  = false;
     while(*cursor != '\0' && !found)
     {
+        const char *trimmed_end;
+        size_t      line_size;
+
         while(*cursor == ' ' || *cursor == '\t')
         {
             cursor++;

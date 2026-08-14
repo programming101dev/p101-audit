@@ -337,9 +337,9 @@ static bool boundary_text(const struct p101_env *env, struct p101_error *err, co
 
 static bool boundary_path(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const char *relative, char *absolute, size_t absolute_size)
 {
-    char  joined[P101_WORKSPACE_AUDIT_PATH_SIZE];
-    bool  joined_ok;
-    char *resolved;
+    char        joined[P101_WORKSPACE_AUDIT_PATH_SIZE];
+    bool        joined_ok;
+    const char *resolved;
 
     joined_ok = ((relative[0] != '/' && p101_workspace_audit_join(env, err, joined, sizeof(joined), options->workspace, relative)) != 0);
     if(!joined_ok)

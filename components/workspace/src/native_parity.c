@@ -89,7 +89,7 @@ bool p101_workspace_audit_run_native_parity(const struct p101_env *env, struct p
     }
     while(row_count < PARITY_MAX_ROWS)
     {
-        char *read_result;
+        const char *read_result;
 
         read_result = p101_fgets(env, err, line, sizeof(line), stream);
         if(read_result == NULL)
@@ -141,7 +141,7 @@ bool p101_workspace_audit_run_native_parity(const struct p101_env *env, struct p
         }
         if(copied)
         {
-            char *resolved;
+            const char *resolved;
 
             resolved = p101_realpath(env, err, rows[row_count].source, resolved_source);
             copied   = resolved != NULL;
@@ -325,10 +325,9 @@ static bool manifest_has_identity(const struct p101_env *env, struct p101_error 
     }
     while(!present)
     {
-        char  *read_result;
-        char  *fields[4];
-        size_t field_count;
-        int    comparison;
+        const char *read_result;
+        char       *fields[4];
+        size_t      field_count;
 
         read_result = p101_fgets(env, err, line, sizeof(line), stream);
         if(read_result == NULL)
@@ -338,6 +337,8 @@ static bool manifest_has_identity(const struct p101_env *env, struct p101_error 
         field_count = split_fields(line, fields, sizeof(fields) / sizeof(fields[0]));
         if(field_count >= 2U)
         {
+            int comparison;
+
             comparison = p101_strcmp(env, fields[1], identity);
             present    = comparison == 0;
         }

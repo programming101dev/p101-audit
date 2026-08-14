@@ -173,7 +173,7 @@ static bool load_manifest(const struct p101_env *env, struct p101_error *err, st
         cursor = line;
         for(index = 0U; index < API_MAX_FIELDS && cursor != NULL; index++)
         {
-            char *name;
+            const char *name;
 
             name = p101_record_split(&cursor);
             if(name == NULL)
@@ -284,17 +284,17 @@ done:
 
 static void sort_records(const struct p101_env *env, struct api_snapshot *snapshot)
 {
-    struct api_record value;
-    size_t            outer;
-    size_t            inner;
-    int               comparison;
-
-    for(outer = 1U; outer < snapshot->count; outer++)
+    for(size_t outer = 1U; outer < snapshot->count; outer++)
     {
+        struct api_record value;
+        size_t            inner;
+
         value = snapshot->records[outer];
         inner = outer;
         while(inner > 0U)
         {
+            int comparison;
+
             comparison = p101_strcmp(env, snapshot->records[inner - 1U].usr, value.usr);
             if(comparison <= 0)
             {

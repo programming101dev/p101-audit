@@ -42,9 +42,6 @@ int main(int argc, char **argv)
             status = p101_api_snapshot(env, err, argv[2], argv[3]);
             goto done;
         }
-    }
-    if(argc == 4)
-    {
         comparison = p101_strcmp(env, argv[1], "compare");
         if(comparison == 0)
         {

@@ -30,7 +30,7 @@ int main(int argc, char **argv)
     const char                         *message;
     char                                workspace[P101_WORKSPACE_AUDIT_PATH_SIZE];
     char                                scripts_root[P101_WORKSPACE_AUDIT_PATH_SIZE];
-    char                               *resolved;
+    const char                         *resolved;
 
     err = p101_error_create(false);
     env = p101_env_create(err, NULL);
@@ -166,7 +166,6 @@ static void usage(const struct p101_env *env, struct p101_error *err, const char
 static bool parse_arguments(const struct p101_env *env, struct p101_error *err, int argc, char **argv, struct p101_workspace_audit_options *options, bool *help)
 {
     int          index;
-    int          comparison;
     int          parse_status;
     unsigned int outputs;
     bool         parsed;
@@ -179,6 +178,8 @@ static bool parse_arguments(const struct p101_env *env, struct p101_error *err, 
     parsed                = true;
     for(index = 1; index < argc && parsed; index++)
     {
+        int comparison;
+
         comparison = p101_strcmp(env, argv[index], "-h");
         if(comparison == 0)
         {

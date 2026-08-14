@@ -183,12 +183,13 @@ static enum p101_c_analysis_kind analysis_kind(const struct p101_env *env, const
 {
     static const char *const  names[] = {"FILE", "INCLUDE", "FUNCTION", "PARAMETER", "CALL", "TYPE", "ENUM", "ENUMERATOR", "MACRO", "NOTE", "MUTATION", "DIAGNOSTIC"};
     size_t                    index;
-    int                       comparison;
     enum p101_c_analysis_kind kind;
 
     kind = P101_C_ANALYSIS_DIAGNOSTIC;
     for(index = 0U; index < sizeof(names) / sizeof(names[0]); index++)
     {
+        int comparison;
+
         comparison = p101_strcmp(env, text, names[index]);
         if(comparison == 0)
         {

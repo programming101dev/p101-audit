@@ -174,11 +174,12 @@ static bool array_contains(const struct p101_workspace_json *document, size_t ar
     size_t index;
     size_t token;
     bool   found;
-    bool   equal;
 
     found = false;
     for(index = 0U; index < document->tokens[array].child_count && !found; index++)
     {
+        bool equal;
+
         p101_workspace_json_array_get(document, array, index, &token);
         equal = p101_workspace_json_token_equals(env, document, token, value);
         if(equal)
@@ -193,7 +194,6 @@ static bool tokens_equal(const struct p101_env *env, const struct p101_workspace
 {
     size_t left_size;
     size_t right_size;
-    int    comparison;
     bool   equal;
 
     left_size  = left->tokens[left_token].end - left->tokens[left_token].start;
@@ -201,6 +201,8 @@ static bool tokens_equal(const struct p101_env *env, const struct p101_workspace
     equal      = false;
     if(left_size == right_size)
     {
+        int comparison;
+
         comparison = p101_strncmp(env, left->text + left->tokens[left_token].start, right->text + right->tokens[right_token].start, left_size);
         equal      = comparison == 0;
     }
@@ -239,8 +241,6 @@ static bool manifest_contains(const struct p101_env *env, struct p101_error *err
     while(line_start < text_size && !present)
     {
         size_t line_end;
-        int    comparison;
-
         line_end = line_start;
         while(line_end < text_size && text[line_end] != '\n' && text[line_end] != '\r')
         {
@@ -253,6 +253,8 @@ static bool manifest_contains(const struct p101_env *env, struct p101_error *err
         }
         if(field_start < line_end)
         {
+            int comparison;
+
             field_start++;
             field_end = field_start;
             while(field_end < line_end && text[field_end] != '\t')
@@ -634,13 +636,14 @@ static bool validate_derived_contracts(const struct p101_env *env, struct p101_e
     size_t matched;
     bool   found;
     bool   has_short;
-    bool   present;
     bool   valid;
 
     matched = 0U;
     valid   = get_required(env, err, failure, 0U, "semantics", &semantics, result, failure_path);
     if(valid)
     {
+        bool present;
+
         found   = p101_workspace_json_object_get(env, failure, semantics, "fault_boundary", &value);
         present = (found && p101_workspace_json_token_equals(env, failure, value, "after-entry-trace-before-native-work")) != 0;
         if(!present)
@@ -670,12 +673,12 @@ static bool validate_derived_contracts(const struct p101_env *env, struct p101_e
                 {
                     size_t admitted_index;
                     size_t identity;
-                    size_t identity_size;
-                    size_t observed_size;
-                    int    comparison;
-
                     for(admitted_index = 0U; admitted_index < contract->tokens[admitted].child_count; admitted_index++)
                     {
+                        size_t identity_size;
+                        size_t observed_size;
+                        int    comparison;
+
                         p101_workspace_json_array_get(contract, admitted, admitted_index, &identity);
                         identity_size = contract->tokens[identity].end - contract->tokens[identity].start;
                         observed_size = failure->tokens[function_usr].end - failure->tokens[function_usr].start;
@@ -720,12 +723,12 @@ static bool validate_derived_contracts(const struct p101_env *env, struct p101_e
                 {
                     size_t admitted_index;
                     size_t identity;
-                    size_t identity_size;
-                    size_t observed_size;
-                    int    comparison;
-
                     for(admitted_index = 0U; admitted_index < contract->tokens[admitted].child_count; admitted_index++)
                     {
+                        size_t identity_size;
+                        size_t observed_size;
+                        int    comparison;
+
                         p101_workspace_json_array_get(contract, admitted, admitted_index, &identity);
                         identity_size = contract->tokens[identity].end - contract->tokens[identity].start;
                         observed_size = lifecycle->tokens[observed].end - lifecycle->tokens[observed].start;

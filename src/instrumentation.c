@@ -141,12 +141,13 @@ done:
 
 static size_t instrumentation_hash(const char *text)
 {
-    size_t        hash;
-    unsigned char byte;
+    size_t hash;
 
     hash = INSTRUMENTATION_HASH_SEED;
     while(*text != '\0')
     {
+        unsigned char byte;
+
         byte = (unsigned char)*text;
         if(hash > (SIZE_MAX - byte) / INSTRUMENTATION_HASH_MULTIPLIER)
         {
@@ -163,13 +164,14 @@ static bool instrumentation_insert(const struct p101_env *env, struct instrument
     size_t slot;
     size_t hash;
     bool   inserted;
-    int    comparison;
 
     hash     = instrumentation_hash(usr);
     slot     = hash & (capacity - 1U);
     inserted = false;
     for(size_t probe = 0U; probe < capacity; probe++)
     {
+        int comparison;
+
         if(slots[slot].usr == NULL)
         {
             slots[slot].usr                 = usr;
@@ -223,13 +225,14 @@ done:
 
 static size_t instrumentation_fallback_function(const struct p101_env *env, const struct p101_wrapper_model *model, const struct p101_wrapper_fact *fact)
 {
-    const struct p101_wrapper_fact *candidate;
-    size_t                          found;
-    int                             comparison;
+    size_t found;
 
     found = model->fact_count;
     for(size_t index = 0U; index < model->fact_count; index++)
     {
+        const struct p101_wrapper_fact *candidate;
+        int                             comparison;
+
         candidate = &model->facts[index];
         if(candidate->kind != P101_C_ANALYSIS_FUNCTION || !candidate->is_definition)
         {
@@ -326,10 +329,10 @@ static void instrumentation_add_role(const struct p101_env *env, struct p101_ins
         &capabilities->allocation,
         &capabilities->resource,
     };
-    int comparison;
-
     for(size_t index = 0U; index < sizeof(names) / sizeof(names[0]); index++)
     {
+        int comparison;
+
         comparison = p101_strcmp(env, role, names[index]);
         if(comparison == 0)
         {

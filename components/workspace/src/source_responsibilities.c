@@ -197,7 +197,6 @@ static bool source_suffix(const struct p101_env *env, const char *name)
 {
     static const char *const suffixes[] = {".c", ".cc", ".cpp", ".cxx"};
     size_t                   name_length;
-    size_t                   suffix_length;
     size_t                   index;
     int                      comparison;
     bool                     matches;
@@ -206,6 +205,8 @@ static bool source_suffix(const struct p101_env *env, const char *name)
     matches     = false;
     for(index = 0U; index < sizeof(suffixes) / sizeof(suffixes[0]); index++)
     {
+        size_t suffix_length;
+
         suffix_length = p101_strlen(env, suffixes[index]);
         if(name_length >= suffix_length)
         {
@@ -283,14 +284,14 @@ done:
 
 static bool collect_source_paths(const struct p101_env *env, struct p101_error *err, struct responsibility_scan_paths *paths, const char *directory)    // NOLINT(misc-no-recursion): bounded workspace tree walk.
 {
-    char           path[P101_WORKSPACE_AUDIT_PATH_SIZE];
-    DIR           *stream;
-    struct dirent *entry;
-    struct stat    status_buffer;
-    int            status;
-    int            close_status;
-    bool           joined;
-    bool           collected;
+    char                 path[P101_WORKSPACE_AUDIT_PATH_SIZE];
+    DIR                 *stream;
+    const struct dirent *entry;
+    struct stat          status_buffer;
+    int                  status;
+    int                  close_status;
+    bool                 joined;
+    bool                 collected;
 
     stream = p101_opendir(env, err, directory);
     if(stream == NULL)
@@ -367,12 +368,13 @@ static bool production_path(const struct p101_env *env, const char *path)
 {
     static const char *const excluded[] = {"/test/", "/tests/", "/fuzz/", "/.git/", "/build-", "/build_", "/build."};
     size_t                   index;
-    const char              *match;
     bool                     production;
 
     production = true;
     for(index = 0U; index < sizeof(excluded) / sizeof(excluded[0]); index++)
     {
+        const char *match;
+
         match = p101_strstr(env, path, excluded[index]);
         if(match != NULL)
         {
@@ -386,12 +388,13 @@ static bool production_path(const struct p101_env *env, const char *path)
 static bool fact_identity_under(const struct p101_env *env, const struct p101_wrapper_model *model, enum p101_c_analysis_kind kind, const char *identity, const char *root)
 {
     size_t index;
-    int    comparison;
     bool   found;
 
     found = false;
     for(index = 0U; index < model->fact_count; index++)
     {
+        int comparison;
+
         comparison = p101_strcmp(env, model->facts[index].usr, identity);
         if(model->facts[index].kind == kind && comparison == 0 && path_beneath(env, model->facts[index].path, root))
         {
@@ -702,24 +705,26 @@ static bool config_has_target(const struct p101_env *env, const char *text, cons
 {
     size_t length;
     size_t text_length;
-    size_t limit;
-    size_t index;
     bool   found;
-    bool   left_identifier;
-    bool   right_identifier;
-    int    comparison;
 
     length      = p101_strlen(env, target);
     text_length = p101_strlen(env, text);
     found       = false;
     if(length <= text_length)
     {
+        size_t limit;
+
         limit = text_length - length;
-        for(index = 0U; index <= limit && !found; index++)
+        for(size_t index = 0U; index <= limit && !found; index++)
         {
+            int comparison;
+
             comparison = p101_strncmp(env, text + index, target, length);
             if(comparison == 0)
             {
+                bool left_identifier;
+                bool right_identifier;
+
                 left_identifier = false;
                 if(index > 0U)
                 {
@@ -749,7 +754,6 @@ static bool include_target(const struct p101_env *env, const char *include_name,
 {
     const char *start;
     const char *separator;
-    size_t      length;
     bool        copied;
 
     start = include_name;
@@ -761,6 +765,8 @@ static bool include_target(const struct p101_env *env, const char *include_name,
     copied    = separator != NULL;
     if(copied)
     {
+        size_t length;
+
         length = (size_t)(separator - start);
         copied = ((length > sizeof("p101_") - 1U && length < target_size && p101_strncmp(env, start, "p101_", sizeof("p101_") - 1U) == 0) != 0);
         if(copied)

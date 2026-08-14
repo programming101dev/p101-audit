@@ -183,13 +183,14 @@ void p101_workspace_audit_write(const struct p101_env *env, struct p101_error *e
     FILE                       *human_stream;
     FILE                       *json_stream;
     size_t                      index;
-    int                         status;
 
     P101_TRACE_SCOPE(env);
     human_stream = (options->outputs & P101_TOOL_DIAGNOSTIC_OUTPUT_HUMAN) != 0U ? stderr : NULL;
     json_stream  = (options->outputs & P101_TOOL_DIAGNOSTIC_OUTPUT_JSON) != 0U ? stdout : NULL;
     for(index = 0U; index < result->finding_count; index++)
     {
+        int status;
+
         diagnostic.id            = "P101-WORKSPACE";
         diagnostic.severity      = P101_TOOL_DIAGNOSTIC_ERROR;
         diagnostic.path          = result->findings[index].path;
@@ -222,7 +223,7 @@ bool p101_workspace_audit_prepare_analysis(const struct p101_env *env, struct p1
     char        repositories_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
     char        line[WORKSPACE_REPOSITORY_LINE_SIZE];
     FILE       *stream;
-    char       *read_result;
+    const char *read_result;
     const char *first_separator;
     const char *second_separator;
     const char *destination;

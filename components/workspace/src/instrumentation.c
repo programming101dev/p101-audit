@@ -339,12 +339,13 @@ done:
 
 static size_t instrumentation_hash(const char *text)
 {
-    size_t        hash;
-    unsigned char byte;
+    size_t hash;
 
     hash = INSTRUMENTATION_HASH_SEED;
     while(*text != '\0')
     {
+        unsigned char byte;
+
         byte = (unsigned char)*text;
         if(hash > (SIZE_MAX - byte) / INSTRUMENTATION_HASH_MULTIPLIER)
         {
@@ -360,12 +361,13 @@ static bool instrumentation_api_insert(const struct p101_env *env, struct instru
 {
     size_t slot;
     bool   inserted;
-    int    comparison;
 
     slot     = instrumentation_hash(apis[api_index].usr) & (capacity - 1U);
     inserted = false;
     for(size_t probe = 0U; probe < capacity; probe++)
     {
+        int comparison;
+
         if(slots[slot].usr == NULL)
         {
             slots[slot].usr                = apis[api_index].usr;
@@ -463,12 +465,12 @@ static bool instrumentation_assign_facts(const struct p101_env *env, struct p101
         {
             size_t fact_path_length;
             size_t source_length;
-            size_t workspace_length;
-
             fact_path_length = p101_strlen(env, fact->path);
             source_length    = p101_strlen(env, apis[api_index].source);
             if(fact_path_length >= source_length)
             {
+                size_t workspace_length;
+
                 workspace_length = fact_path_length - source_length;
                 comparison       = p101_strcmp(env, fact->path + workspace_length, apis[api_index].source);
             }

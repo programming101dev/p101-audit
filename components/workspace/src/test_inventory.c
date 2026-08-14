@@ -250,12 +250,13 @@ static bool path_status(const struct p101_env *env, struct p101_error *err, cons
 static bool path_list_contains(const struct p101_env *env, const struct inventory_paths *paths, const char *value)
 {
     size_t index;
-    int    comparison;
     bool   present;
 
     present = false;
     for(index = 0U; index < paths->count; index++)
     {
+        int comparison;
+
         comparison = p101_strcmp(env, paths->values[index], value);
         if(comparison == 0)
         {
@@ -557,7 +558,6 @@ static bool verification_name(const struct p101_env *env, const char *name)
 {
     size_t length;
     int    prefix_check;
-    int    suffix_check;
     bool   matches;
 
     length       = p101_strlen(env, name);
@@ -569,6 +569,8 @@ static bool verification_name(const struct p101_env *env, const char *name)
     matches = ((prefix_check == 0 && length > 3U) != 0);
     if(matches)
     {
+        int suffix_check;
+
         suffix_check = p101_strcmp(env, name + length - 3U, ".sh");
         if(suffix_check != 0)
         {
@@ -586,7 +588,7 @@ static bool validate_repository_entries(const struct p101_env *env, struct p101_
     char                   path[P101_WORKSPACE_AUDIT_PATH_SIZE];
     struct inventory_paths repositories;
     FILE                  *stream;
-    char                  *read_result;
+    const char            *read_result;
     const char            *first;
     const char            *second;
     char                  *language;
