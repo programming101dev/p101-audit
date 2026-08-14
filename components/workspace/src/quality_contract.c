@@ -32,6 +32,8 @@ static bool quality_variant_exists(const struct p101_env *env, const struct p101
 static bool quality_classified(const struct p101_env *env, const struct quality_enum_contract *enums, size_t enum_count, const char *usr);
 static bool quality_source_function(const struct p101_env *env, const struct p101_wrapper_model *model, const char *source, const char *usr);
 static bool quality_source_has_role(const struct p101_env *env, const struct p101_wrapper_model *model, const char *caller_usr, const struct p101_workspace_json *contract, size_t roles);
+static bool quality_string_array(const struct p101_workspace_json *document, size_t array);
+static bool quality_prior_text_unique(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_json *document, size_t array, size_t current, const char *key, const char *value);
 static bool quality_contains_case_insensitive(const char *text, const char *pattern);
 static bool quality_documentation(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const struct p101_workspace_json *contract, size_t documentation, struct p101_workspace_audit_result *result,
                                   const char *contract_path);
@@ -104,7 +106,8 @@ bool p101_workspace_audit_run_quality_contract(const struct p101_env *env, struc
         goto done;
     }
     found = p101_workspace_json_object_get(env, &contract, 0U, "schema", &token);
-    valid = found && p101_workspace_json_token_equals(env, &contract, token, "p101-quality-contract-v3");
+    valid = found && contract.tokens[0].child_count == 22U && p101_workspace_json_token_equals(env, &contract, token, "p101-quality-contract-v3");
+    valid = quality_text(env, err, &contract, 0U, "does_not_prove", text, sizeof(text)) && valid;
     for(size_t index = 0U; index < sizeof(REQUIRED_TOP) / sizeof(REQUIRED_TOP[0]); index++)
     {
         found = p101_workspace_json_object_get(env, &contract, 0U, REQUIRED_TOP[index], &token);
@@ -131,9 +134,12 @@ bool p101_workspace_audit_run_quality_contract(const struct p101_env *env, struc
         for(size_t index = 0U; index < contract.tokens[array].child_count; index++)
         {
             found      = p101_workspace_json_array_get(&contract, array, index, &row);
-            valid      = found && quality_text(env, err, &contract, row, "id", text, sizeof(text));
+            valid      = found && contract.tokens[row].kind == P101_WORKSPACE_JSON_OBJECT && contract.tokens[row].child_count == 10U;
+            valid      = quality_text(env, err, &contract, row, "id", text, sizeof(text)) && valid;
             comparison = valid ? p101_strncmp(env, text, "public:", sizeof("public:") - 1U) : -1;
-            valid      = comparison == 0 && quality_text(env, err, &contract, row, "contract", source, sizeof(source)) && valid;
+            valid      = comparison == 0 && quality_prior_text_unique(env, err, &contract, array, index, "id", text) && valid;
+            valid      = quality_text(env, err, &contract, row, "owner", name, sizeof(name)) && valid;
+            valid      = quality_text(env, err, &contract, row, "contract", source, sizeof(source)) && valid;
             valid      = valid && quality_workspace_file(env, err, options, source, absolute, sizeof(absolute));
             valid      = quality_text(env, err, &contract, row, "checker", source, sizeof(source)) && valid;
             valid      = valid && quality_workspace_file(env, err, options, source, absolute, sizeof(absolute));
@@ -163,11 +169,24 @@ bool p101_workspace_audit_run_quality_contract(const struct p101_env *env, struc
             size_t variants;
 
             found = p101_workspace_json_array_get(&contract, array, index, &row);
-            valid = found && quality_text(env, err, &contract, row, "source", source, sizeof(source));
+            valid = found && contract.tokens[row].kind == P101_WORKSPACE_JSON_OBJECT;
+            valid = contract.tokens[row].child_count == (classification == 0U ? 12U : 10U) && valid;
+            valid = quality_text(env, err, &contract, row, "source", source, sizeof(source)) && valid;
             valid = quality_text(env, err, &contract, row, "type", name, sizeof(name)) && valid;
             valid = quality_text(env, err, &contract, row, "type_usr", usr, sizeof(usr)) && valid;
+            valid = quality_text(env, err, &contract, row, "owner", text, sizeof(text)) && valid;
+            if(classification == 0U)
+            {
+                valid = quality_text(env, err, &contract, row, "oracle", oracle, sizeof(oracle)) && valid;
+                valid = valid && quality_oracle_exists(env, &graph, nodes, oracle);
+            }
+            valid = !quality_classified(env, enums, enum_count, usr) && valid;
             valid = valid && quality_workspace_file(env, err, options, source, absolute, sizeof(absolute));
             valid = valid && quality_enum_fact(env, &model, usr, source, name, &fact_index);
+            if(classification != 0U)
+            {
+                valid = quality_text(env, err, &contract, row, "reason", text, sizeof(text)) && valid;
+            }
             if(enum_count >= QUALITY_ENUM_CAPACITY)
             {
                 P101_ERROR_RAISE_ERRNO(err, EOVERFLOW);
@@ -253,16 +272,30 @@ bool p101_workspace_audit_run_quality_contract(const struct p101_env *env, struc
         for(size_t index = 0U; index < contract.tokens[array].child_count; index++)
         {
             char kind[P101_WRAPPER_NAME_SIZE];
+            char mode[P101_WRAPPER_NAME_SIZE];
+            char identifier[P101_WRAPPER_NAME_SIZE];
+            char owner[P101_WRAPPER_NAME_SIZE];
+            int  mode_comparison;
 
-            found      = p101_workspace_json_array_get(&contract, array, index, &row);
-            valid      = found && quality_text(env, err, &contract, row, "source", source, sizeof(source));
-            valid      = valid && quality_workspace_file(env, err, options, source, absolute, sizeof(absolute));
-            valid      = quality_text(env, err, &contract, row, "oracle", oracle, sizeof(oracle)) && valid;
-            valid      = valid && quality_oracle_exists(env, &graph, nodes, oracle);
-            found      = p101_workspace_json_object_get(env, &contract, row, "evidence", &evidence);
-            valid      = found && quality_text(env, err, &contract, evidence, "kind", kind, sizeof(kind)) && valid;
-            valid      = quality_text(env, err, &contract, evidence, "value", text, sizeof(text)) && valid;
-            comparison = p101_strcmp(env, kind, "function-usr");
+            found           = p101_workspace_json_array_get(&contract, array, index, &row);
+            valid           = found && contract.tokens[row].kind == P101_WORKSPACE_JSON_OBJECT && contract.tokens[row].child_count == 12U;
+            valid           = quality_text(env, err, &contract, row, "id", identifier, sizeof(identifier)) && valid;
+            comparison      = valid ? p101_strncmp(env, identifier, "audit:", sizeof("audit:") - 1U) : -1;
+            valid           = comparison == 0 && quality_prior_text_unique(env, err, &contract, array, index, "id", identifier) && valid;
+            valid           = quality_text(env, err, &contract, row, "owner", owner, sizeof(owner)) && valid;
+            valid           = quality_text(env, err, &contract, row, "mode", mode, sizeof(mode)) && valid;
+            comparison      = p101_strcmp(env, mode, "local");
+            mode_comparison = p101_strcmp(env, mode, "delegated");
+            valid           = (comparison == 0 || mode_comparison == 0) && valid;
+            valid           = quality_text(env, err, &contract, row, "source", source, sizeof(source)) && valid;
+            valid           = valid && quality_workspace_file(env, err, options, source, absolute, sizeof(absolute));
+            valid           = quality_text(env, err, &contract, row, "oracle", oracle, sizeof(oracle)) && valid;
+            valid           = valid && quality_oracle_exists(env, &graph, nodes, oracle);
+            found           = p101_workspace_json_object_get(env, &contract, row, "evidence", &evidence);
+            valid           = found && contract.tokens[evidence].kind == P101_WORKSPACE_JSON_OBJECT && contract.tokens[evidence].child_count == 4U && valid;
+            valid           = quality_text(env, err, &contract, evidence, "kind", kind, sizeof(kind)) && valid;
+            valid           = quality_text(env, err, &contract, evidence, "value", text, sizeof(text)) && valid;
+            comparison      = p101_strcmp(env, kind, "function-usr");
             if(comparison == 0)
             {
                 valid = valid && quality_source_function(env, &model, source, text);
@@ -285,6 +318,10 @@ bool p101_workspace_audit_run_quality_contract(const struct p101_env *env, struc
             result->checks++;
         }
     }
+    else
+    {
+        quality_add(env, err, result, contract_path, "audit responsibility", "catalog is missing or empty");
+    }
 
     found  = p101_workspace_json_object_get(env, &contract, 0U, "boundaries", &array);
     loaded = p101_workspace_json_object_get(env, &boundary_register, 0U, "boundaries", &value);
@@ -295,7 +332,9 @@ bool p101_workspace_audit_run_quality_contract(const struct p101_env *env, struc
             bool registered;
 
             p101_workspace_json_array_get(&contract, array, index, &row);
-            valid      = quality_text(env, err, &contract, row, "id", text, sizeof(text));
+            valid      = contract.tokens[row].kind == P101_WORKSPACE_JSON_OBJECT && contract.tokens[row].child_count == 4U;
+            valid      = quality_text(env, err, &contract, row, "id", text, sizeof(text)) && valid;
+            valid      = quality_prior_text_unique(env, err, &contract, array, index, "id", text) && valid;
             valid      = quality_text(env, err, &contract, row, "oracle", oracle, sizeof(oracle)) && valid;
             valid      = valid && quality_oracle_exists(env, &graph, nodes, oracle);
             registered = false;
@@ -319,11 +358,19 @@ bool p101_workspace_audit_run_quality_contract(const struct p101_env *env, struc
     }
 
     found      = p101_workspace_json_object_get(env, &contract, 0U, "process_termination", &row);
-    valid      = found && quality_text(env, err, &contract, row, "allowed_caller_usr", usr, sizeof(usr));
+    valid      = found && contract.tokens[row].kind == P101_WORKSPACE_JSON_OBJECT && contract.tokens[row].child_count == 12U;
+    valid      = quality_text(env, err, &contract, row, "allowed_caller_usr", usr, sizeof(usr)) && valid;
     comparison = valid ? p101_strcmp(env, usr, "c:@F@main") : -1;
     valid      = comparison == 0 && p101_workspace_json_object_get(env, &contract, row, "termination_usrs", &array) && valid;
+    valid      = valid && quality_string_array(&contract, array);
     valid      = p101_workspace_json_object_get(env, &contract, row, "excluded_semantic_roles", &evidence) && valid;
-    valid      = contract.tokens[evidence].kind == P101_WORKSPACE_JSON_ARRAY && contract.tokens[evidence].child_count > 0U && valid;
+    valid      = quality_string_array(&contract, evidence) && valid;
+    found      = p101_workspace_json_object_get(env, &contract, row, "source_roots", &token);
+    valid      = found && quality_string_array(&contract, token) && valid;
+    valid      = quality_text(env, err, &contract, row, "checker", source, sizeof(source)) && valid;
+    valid      = valid && quality_workspace_file(env, err, options, source, absolute, sizeof(absolute));
+    valid      = quality_text(env, err, &contract, row, "oracle", oracle, sizeof(oracle)) && valid;
+    valid      = valid && quality_oracle_exists(env, &graph, nodes, oracle);
     if(valid)
     {
         for(size_t index = 0U; index < model.fact_count; index++)
@@ -362,8 +409,9 @@ bool p101_workspace_audit_run_quality_contract(const struct p101_env *env, struc
     }
 
     found = p101_workspace_json_object_get(env, &contract, 0U, "platform_evidence", &row);
+    valid = found && contract.tokens[row].kind == P101_WORKSPACE_JSON_OBJECT && contract.tokens[row].child_count == 10U;
     found = found && p101_workspace_json_object_get(env, &contract, row, "required", &array);
-    valid = found && contract.tokens[array].kind == P101_WORKSPACE_JSON_ARRAY && contract.tokens[array].child_count == 3U;
+    valid = found && contract.tokens[array].kind == P101_WORKSPACE_JSON_ARRAY && contract.tokens[array].child_count == 3U && valid;
     valid = valid && p101_workspace_json_object_get(env, &contract, row, "receipt_schema", &token);
     valid = valid && p101_workspace_json_token_equals(env, &contract, token, "p101-check-graph-receipt-v2");
     for(size_t platform_index = 0U; platform_index < 3U && valid; platform_index++)
@@ -379,6 +427,12 @@ bool p101_workspace_audit_run_quality_contract(const struct p101_env *env, struc
         }
         valid = present && valid;
     }
+    valid = quality_text(env, err, &contract, row, "producer", source, sizeof(source)) && valid;
+    valid = valid && quality_workspace_file(env, err, options, source, absolute, sizeof(absolute));
+    valid = quality_text(env, err, &contract, row, "merge_driver", source, sizeof(source)) && valid;
+    valid = valid && quality_workspace_file(env, err, options, source, absolute, sizeof(absolute));
+    valid = quality_text(env, err, &contract, row, "oracle", oracle, sizeof(oracle)) && valid;
+    valid = valid && quality_oracle_exists(env, &graph, nodes, oracle);
     if(!valid)
     {
         quality_add(env, err, result, contract_path, "platform evidence", "must require FreeBSD, Linux, and macOS receipts");
@@ -391,7 +445,9 @@ bool p101_workspace_audit_run_quality_contract(const struct p101_env *env, struc
         for(size_t index = 0U; index < contract.tokens[array].child_count; index++)
         {
             p101_workspace_json_array_get(&contract, array, index, &row);
-            valid = quality_text(env, err, &contract, row, "oracle", oracle, sizeof(oracle));
+            valid = contract.tokens[row].kind == P101_WORKSPACE_JSON_OBJECT && contract.tokens[row].child_count == 4U;
+            valid = quality_text(env, err, &contract, row, "kind", text, sizeof(text)) && valid;
+            valid = quality_text(env, err, &contract, row, "oracle", oracle, sizeof(oracle)) && valid;
             valid = valid && quality_oracle_exists(env, &graph, nodes, oracle);
             if(!valid)
             {
@@ -399,6 +455,10 @@ bool p101_workspace_audit_run_quality_contract(const struct p101_env *env, struc
             }
             result->checks++;
         }
+    }
+    else
+    {
+        quality_add(env, err, result, contract_path, "implementation oracle", "catalog is missing or empty");
     }
     success = p101_error_has_no_error(err);
 
@@ -559,6 +619,46 @@ static bool quality_source_has_role(const struct p101_env *env, const struct p10
         }
     }
     return found;
+}
+
+static bool quality_string_array(const struct p101_workspace_json *document, size_t array)
+{
+    bool valid;
+
+    valid = document->tokens[array].kind == P101_WORKSPACE_JSON_ARRAY && document->tokens[array].child_count > 0U;
+    for(size_t index = 0U; valid && index < document->tokens[array].child_count; index++)
+    {
+        size_t value;
+
+        valid = p101_workspace_json_array_get(document, array, index, &value);
+        valid = valid && document->tokens[value].kind == P101_WORKSPACE_JSON_STRING;
+        valid = valid && document->tokens[value].end > document->tokens[value].start;
+    }
+    return valid;
+}
+
+static bool quality_prior_text_unique(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_json *document, size_t array, size_t current, const char *key, const char *value)
+{
+    char previous[QUALITY_TEXT_SIZE];
+    bool unique;
+
+    unique = true;
+    for(size_t index = 0U; unique && index < current; index++)
+    {
+        size_t row;
+        bool   loaded;
+        int    comparison;
+
+        loaded = p101_workspace_json_array_get(document, array, index, &row);
+        loaded = loaded && quality_text(env, err, document, row, key, previous, sizeof(previous));
+        if(!loaded)
+        {
+            return false;
+        }
+        comparison = p101_strcmp(env, value, previous);
+        unique     = comparison != 0;
+    }
+    return unique;
 }
 
 static bool quality_contains_case_insensitive(const char *text, const char *pattern)

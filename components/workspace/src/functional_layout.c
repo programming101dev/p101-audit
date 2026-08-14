@@ -35,7 +35,36 @@ enum
     CENTRAL_FIELD_CURRENT_HEADER = 5
 };
 
-static const char *const domains[] = {"io", "filesystem", "memory", "process", "thread", "sync", "ipc", "network", "terminal", "time", "identity", "text", "locale", "math", "search", "dynamic_linking", "diagnostics", "database", "cli", "random", "host"};
+struct functional_domain
+{
+    const char *name;
+    const char *repository;
+    bool        source_is_namespaced;
+};
+
+static const struct functional_domain domains[] = {
+    {"io",              "io",              false},
+    {"filesystem",      "filesystem",      false},
+    {"memory",          "memory",          false},
+    {"process",         "process",         false},
+    {"thread",          "concurrency",     true },
+    {"sync",            "concurrency",     true },
+    {"ipc",             "ipc",             false},
+    {"network",         "network",         false},
+    {"terminal",        "terminal",        false},
+    {"time",            "time",            false},
+    {"identity",        "identity",        false},
+    {"text",            "text",            true },
+    {"locale",          "text",            true },
+    {"math",            "numeric",         true },
+    {"search",          "search",          false},
+    {"dynamic_linking", "dynamic_linking", false},
+    {"diagnostics",     "diagnostics",     false},
+    {"database",        "database",        false},
+    {"cli",             "cli",             false},
+    {"random",          "numeric",         true },
+    {"host",            "host",            false},
+};
 
 struct retired_library
 {
@@ -65,7 +94,8 @@ static size_t split_fields(char *line, char **fields, size_t capacity);
 static bool   derive_layout(const struct p101_env *env, struct p101_error *err, const char *domain, const char *original_header, char *source, size_t source_size, char *header, size_t header_size);
 static bool   collect_files(const struct p101_env *env, struct p101_error *err, const char *root, const char *relative, const char *suffix, struct path_set *set);
 static bool   collect_central_identities(const struct p101_env *env, struct p101_error *err, const char *path, struct path_set *identities, struct p101_workspace_audit_result *result);
-static bool   validate_domain(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const char *domain, const char *central_text, struct path_set *local_identities, struct p101_workspace_audit_result *result);
+static bool   validate_domain(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const char *domain, const char *repository, bool source_is_namespaced, const char *central_text,
+                              struct path_set *local_identities, struct p101_workspace_audit_result *result);
 static bool   cmake_set_matches(const struct p101_env *env, const char *text, const char *variable, const struct path_set *expected);
 static bool   text_has_retired_target(const struct p101_env *env, const char *text);
 static bool   scan_retired_references(const struct p101_env *env, struct p101_error *err, const char *root, const char *relative, struct p101_workspace_audit_result *result);
@@ -125,7 +155,7 @@ bool p101_workspace_audit_run_functional_layout(const struct p101_env *env, stru
     }
     for(index = 0U; index < sizeof(domains) / sizeof(domains[0]); index++)
     {
-        written = p101_snprintf(env, err, needle, sizeof(needle), "../libraries/lib_%s|", domains[index]);
+        written = p101_snprintf(env, err, needle, sizeof(needle), "../libraries/lib_%s|", domains[index].repository);
         if(written < 0 || (size_t)written >= sizeof(needle))
         {
             goto done;
@@ -133,13 +163,13 @@ bool p101_workspace_audit_run_functional_layout(const struct p101_env *env, stru
         match = p101_strstr(env, repos_text, needle);
         if(match == NULL)
         {
-            written = p101_snprintf(env, err, needle, sizeof(needle), "repos.txt lacks functional library lib_%s", domains[index]);
+            written = p101_snprintf(env, err, needle, sizeof(needle), "repos.txt lacks owner lib_%s for functional domain %s", domains[index].repository, domains[index].name);
             if(written >= 0 && (size_t)written < sizeof(needle))
             {
                 p101_workspace_audit_add(env, err, result, repos_path, needle);
             }
         }
-        validated = validate_domain(env, err, options, domains[index], central_text, &local_identities, result);
+        validated = validate_domain(env, err, options, domains[index].name, domains[index].repository, domains[index].source_is_namespaced, central_text, &local_identities, result);
         if(!validated)
         {
             goto done;
@@ -537,7 +567,8 @@ done:
     return collected;
 }
 
-static bool validate_domain(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const char *domain, const char *central_text, struct path_set *local_identities, struct p101_workspace_audit_result *result)
+static bool validate_domain(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const char *domain, const char *repository, bool source_is_namespaced, const char *central_text,
+                            struct path_set *local_identities, struct p101_workspace_audit_result *result)
 {
     char            repo_relative[P101_WORKSPACE_AUDIT_PATH_SIZE];
     char            repo_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
@@ -554,6 +585,7 @@ static bool validate_domain(const struct p101_env *env, struct p101_error *err, 
     char           *config_text;
     size_t          config_length;
     char            expected_source[P101_WORKSPACE_AUDIT_PATH_SIZE];
+    char            native_source[P101_WORKSPACE_AUDIT_PATH_SIZE];
     char            expected_header[P101_WORKSPACE_AUDIT_PATH_SIZE];
     char            expected_current_source[P101_WORKSPACE_AUDIT_PATH_SIZE];
     char            expected_current_header[P101_WORKSPACE_AUDIT_PATH_SIZE];
@@ -576,7 +608,7 @@ static bool validate_domain(const struct p101_env *env, struct p101_error *err, 
     path_set_init(&actual_headers);
     config_text = NULL;
     valid       = false;
-    written     = p101_snprintf(env, err, repo_relative, sizeof(repo_relative), "libraries/lib_%s", domain);
+    written     = p101_snprintf(env, err, repo_relative, sizeof(repo_relative), "libraries/lib_%s", repository);
     if(written < 0 || (size_t)written >= sizeof(repo_relative))
     {
         goto done;
@@ -612,8 +644,30 @@ static bool validate_domain(const struct p101_env *env, struct p101_error *err, 
             p101_workspace_audit_add(env, err, result, manifest_path, "api manifest has an incomplete row");
             continue;
         }
-        derived = derive_layout(env, err, domain, fields[FIELD_ORIGINAL_HEADER], expected_source, sizeof(expected_source), expected_header, sizeof(expected_header));
+        written = p101_snprintf(env, err, central_row, sizeof(central_row), "%s\t%s\t%s\t", fields[FIELD_FUNCTION], fields[FIELD_FUNCTION_USR], domain);
+        if(written < 0 || (size_t)written >= sizeof(central_row))
+        {
+            break;
+        }
+        match = p101_strstr(env, central_text, central_row);
+        if(match == NULL)
+        {
+            continue;
+        }
+        derived = derive_layout(env, err, domain, fields[FIELD_ORIGINAL_HEADER], native_source, sizeof(native_source), expected_header, sizeof(expected_header));
         if(!derived)
+        {
+            break;
+        }
+        if(source_is_namespaced)
+        {
+            written = p101_snprintf(env, err, expected_source, sizeof(expected_source), "src/p101_%s/%s", domain, native_source + sizeof("src/") - 1U);
+        }
+        else
+        {
+            written = p101_snprintf(env, err, expected_source, sizeof(expected_source), "%s", native_source);
+        }
+        if(written < 0 || (size_t)written >= sizeof(expected_source))
         {
             break;
         }
@@ -647,8 +701,8 @@ static bool validate_domain(const struct p101_env *env, struct p101_error *err, 
                 p101_workspace_audit_add(env, err, result, manifest_path, message);
             }
         }
-        written = p101_snprintf(env, err, expected_current_source, sizeof(expected_current_source), "libraries/lib_%s/%s", domain, expected_source);
-        written = written < 0 ? written : p101_snprintf(env, err, expected_current_header, sizeof(expected_current_header), "libraries/lib_%s/%s", domain, expected_header);
+        written = p101_snprintf(env, err, expected_current_source, sizeof(expected_current_source), "libraries/lib_%s/%s", repository, expected_source);
+        written = written < 0 ? written : p101_snprintf(env, err, expected_current_header, sizeof(expected_current_header), "libraries/lib_%s/%s", repository, expected_header);
         if(written < 0)
         {
             break;
@@ -691,14 +745,6 @@ static bool validate_domain(const struct p101_env *env, struct p101_error *err, 
     if(!joined)
     {
         goto done;
-    }
-    if(actual_sources.count != expected_sources.count)
-    {
-        p101_workspace_audit_add(env, err, result, repo_path, "native source layout drift");
-    }
-    if(actual_headers.count != expected_headers.count)
-    {
-        p101_workspace_audit_add(env, err, result, repo_path, "native header layout drift");
     }
     for(index = 0U; index < expected_sources.count; index++)
     {

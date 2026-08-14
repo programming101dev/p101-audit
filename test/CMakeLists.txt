@@ -29,7 +29,7 @@ set(P101_LIBS
         p101_error
         p101_env
         p101_record
-        p101_tool_event
+        p101_tool_event p101_tool_support
         p101_c
         p101_c_facts
         p101_filesystem

@@ -29,7 +29,7 @@
 #include <p101_process/sys/p101_resource.h>
 #include <p101_process/sys/p101_times.h>
 #include <p101_process/sys/p101_wait.h>
-#include <p101_tool_event/receipt.h>
+#include <p101_tool_support/receipt.h>
 #include <stdbool.h>
 #include <stdlib.h>
 

@@ -49,16 +49,15 @@ boundaries, public-enum quality discovery, public wrapper unit-test coverage,
 and instrumentation coverage. They share one native JSON/TSV reader, one
 `lib_c_facts` acquisition path, one loader for the shared semantic bundle, and
 the common `lib_tool_event` diagnostic writer. Platform instrumentation
-receipts retain their byte-exact contract SHA-256 so the existing
-cross-platform merger can compare them safely.
+receipts retain their byte-exact contract SHA-256 so the check-graph's
+policy-free cross-platform merger can compare them safely.
 Their negative controls live in
 `scripts/tests/test-audit-workspace.sh` and are split into architecture and
 fault groups so the governed graph does not repeat the same scans.
 
 Python remains appropriate for the governed check-graph scheduler, repository
 lock/candidate transactions, source and test generators, external HTML
-harvesting, cross-platform receipt aggregation, and regression fixtures that
-exercise the retired implementations during the native transition. Those jobs
+harvesting, and mechanical cross-platform receipt aggregation. Those jobs
 primarily manipulate dynamic JSON graphs, create source, or orchestrate child
 processes; translating them to C would enlarge the trusted implementation
 without removing their dominant filesystem, compiler, or network cost. Shell

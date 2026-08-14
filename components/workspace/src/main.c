@@ -4,7 +4,7 @@
 #include <p101_c/p101_stdlib.h>
 #include <p101_c/p101_string.h>
 #include <p101_filesystem/p101_stdlib.h>
-#include <p101_tool_event/diagnostic.h>
+#include <p101_tool_support/diagnostic.h>
 
 enum
 {

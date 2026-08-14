@@ -8,7 +8,7 @@
 #include <p101_cli/p101_getopt.h>
 #include <p101_cli/p101_stdlib.h>
 #include <p101_cli/p101_unistd.h>
-#include <p101_tool_event/report.h>
+#include <p101_tool_support/report.h>
 #include <stdlib.h>
 
 void p101_error_contract_arguments_init(const struct p101_env *env, struct arguments *args)

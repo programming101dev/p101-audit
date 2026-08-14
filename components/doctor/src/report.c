@@ -15,8 +15,8 @@
 #include <p101_filesystem/p101_unistd.h>
 #include <p101_filesystem/sys/p101_stat.h>
 #include <p101_filesystem/sys/p101_statvfs.h>
-#include <p101_record/record.h>
-#include <p101_tool_event/receipt.h>
+#include <p101_json/json.h>
+#include <p101_tool_support/receipt.h>
 #include <stdio.h>
 
 static void   write_grade_line(const struct p101_env *env, struct p101_error *err, FILE *stream, const char *label, int status);
@@ -201,7 +201,7 @@ static void write_json_string(const struct p101_env *env, struct p101_error *err
 {
     int p101_call_result_9;
     P101_TRACE_SCOPE(env);
-    p101_call_result_9 = p101_record_write_json_string(stream, text == NULL ? "" : text);
+    p101_call_result_9 = p101_json_write_string(stream, text == NULL ? "" : text);
     if(p101_call_result_9 != 0)
     {
         P101_ERROR_RAISE_ERRNO(err, errno == 0 ? EIO : errno);

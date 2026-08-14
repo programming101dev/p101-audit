@@ -20,6 +20,8 @@ static bool boundary_text(const struct p101_env *env, struct p101_error *err, co
 static bool boundary_path(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const char *relative, char *absolute, size_t absolute_size);
 static bool boundary_function_exists(const struct p101_env *env, const struct p101_wrapper_model *model, const char *path, const char *usr);
 static bool boundary_test_wired(const struct p101_env *env, const struct p101_wrapper_model *model, const char *path, const char *role);
+static bool boundary_string_array(const struct p101_workspace_json *document, size_t array);
+static bool boundary_identity_is_unique(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_json *document, size_t boundaries, size_t current, const char *identifier, const char *owner_source, const char *owner_usr);
 static bool boundary_shell_wired(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const char *path, const char *marker);
 static bool boundary_execution_evidence(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const struct p101_workspace_json *register_document, size_t boundaries, struct p101_workspace_audit_result *result,
                                         const char *contract_path);
@@ -37,6 +39,8 @@ bool p101_workspace_audit_run_boundaries(const struct p101_env *env, struct p101
     char                       owner_usr[BOUNDARY_TEXT_SIZE];
     char                       evidence_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
     char                       evidence_value[BOUNDARY_TEXT_SIZE];
+    char                       seen_evidence_path[BOUNDARY_TEST_COUNT][P101_WORKSPACE_AUDIT_PATH_SIZE];
+    char                       seen_evidence_value[BOUNDARY_TEST_COUNT][BOUNDARY_TEXT_SIZE];
     char                       text[BOUNDARY_TEXT_SIZE];
     size_t                     boundaries;
     size_t                     boundary;
@@ -50,6 +54,7 @@ bool p101_workspace_audit_run_boundaries(const struct p101_env *env, struct p101
     bool                       valid;
     bool                       path_ok;
     bool                       semantic;
+    bool                       unique;
     bool                       success;
     int                        comparison;
 
@@ -119,10 +124,15 @@ bool p101_workspace_audit_run_boundaries(const struct p101_env *env, struct p101
         {
             boundary_finding(env, err, result, contract_path, identifier, "owner declaration identity is absent from its source");
         }
+        unique = valid && boundary_identity_is_unique(env, err, &document, boundaries, index, identifier, owner_source, owner_usr);
+        if(!unique)
+        {
+            boundary_finding(env, err, result, contract_path, identifier, "reuses a boundary identity or owner declaration");
+        }
         found = p101_workspace_json_object_get(env, &document, boundary, "composition", &evidence);
-        valid = found && document.tokens[evidence].kind == P101_WORKSPACE_JSON_ARRAY && document.tokens[evidence].child_count > 0U;
+        valid = found && boundary_string_array(&document, evidence);
         found = p101_workspace_json_object_get(env, &document, boundary, "collaborators", &test_index);
-        valid = found && document.tokens[test_index].kind == P101_WORKSPACE_JSON_ARRAY && document.tokens[test_index].child_count > 0U && valid;
+        valid = found && boundary_string_array(&document, test_index) && valid;
         if(!valid)
         {
             boundary_finding(env, err, result, contract_path, identifier, "has no composition or collaborator contract");
@@ -135,6 +145,11 @@ bool p101_workspace_audit_run_boundaries(const struct p101_env *env, struct p101
         }
         for(test_index = 0U; test_index < BOUNDARY_TEST_COUNT; test_index++)
         {
+            seen_evidence_path[test_index][0]  = '\0';
+            seen_evidence_value[test_index][0] = '\0';
+        }
+        for(test_index = 0U; test_index < BOUNDARY_TEST_COUNT; test_index++)
+        {
             found = p101_workspace_json_object_get(env, &document, tests, BOUNDARY_TESTS[test_index], &evidence);
             if(!found || document.tokens[evidence].kind != P101_WORKSPACE_JSON_OBJECT)
             {
@@ -144,7 +159,7 @@ bool p101_workspace_audit_run_boundaries(const struct p101_env *env, struct p101
             found = p101_workspace_json_object_get(env, &document, evidence, "not_applicable", &boundary);
             if(found)
             {
-                valid = test_index == BOUNDARY_TEST_COUNT - 1U && p101_workspace_json_token_equals(env, &document, boundary, "true");
+                valid = document.tokens[evidence].child_count == 4U && test_index == BOUNDARY_TEST_COUNT - 1U && p101_workspace_json_token_equals(env, &document, boundary, "true");
                 valid = boundary_text(env, err, &document, evidence, "reason", text, sizeof(text)) && valid;
                 if(!valid)
                 {
@@ -152,7 +167,8 @@ bool p101_workspace_audit_run_boundaries(const struct p101_env *env, struct p101
                 }
                 continue;
             }
-            valid    = boundary_text(env, err, &document, evidence, "path", evidence_path, sizeof(evidence_path));
+            valid    = document.tokens[evidence].child_count == 4U;
+            valid    = boundary_text(env, err, &document, evidence, "path", evidence_path, sizeof(evidence_path)) && valid;
             semantic = false;
             if(valid)
             {
@@ -180,6 +196,20 @@ bool p101_workspace_audit_run_boundaries(const struct p101_env *env, struct p101
             {
                 valid = false;
             }
+            for(size_t previous = 0U; previous < test_index; previous++)
+            {
+                int path_comparison;
+                int value_comparison;
+
+                path_comparison  = p101_strcmp(env, seen_evidence_path[previous], evidence_path);
+                value_comparison = p101_strcmp(env, seen_evidence_value[previous], evidence_value);
+                if(path_comparison == 0 && value_comparison == 0)
+                {
+                    valid = false;
+                }
+            }
+            p101_snprintf(env, err, seen_evidence_path[test_index], sizeof(seen_evidence_path[test_index]), "%s", evidence_path);
+            p101_snprintf(env, err, seen_evidence_value[test_index], sizeof(seen_evidence_value[test_index]), "%s", evidence_value);
             if(!valid)
             {
                 boundary_finding(env, err, result, contract_path, identifier, "has missing or unwired executable boundary evidence");
@@ -331,7 +361,7 @@ static bool boundary_test_wired(const struct p101_env *env, const struct p101_wr
 {
     char        expected[P101_WRAPPER_NAME_SIZE];
     const char *caller_usr;
-    bool        found_role;
+    size_t      role_count;
     bool        found_call;
     int         written;
 
@@ -341,8 +371,8 @@ static bool boundary_test_wired(const struct p101_env *env, const struct p101_wr
         return false;
     }
     caller_usr = NULL;
-    found_role = false;
-    for(size_t index = 0U; index < model->fact_count && !found_role; index++)
+    role_count = 0U;
+    for(size_t index = 0U; index < model->fact_count; index++)
     {
         const struct p101_wrapper_fact *fact;
         int                             path_comparison;
@@ -354,11 +384,11 @@ static bool boundary_test_wired(const struct p101_env *env, const struct p101_wr
         if(fact->kind == P101_C_ANALYSIS_NOTE && path_comparison == 0 && role_comparison == 0 && fact->caller_usr[0] != '\0')
         {
             caller_usr = fact->caller_usr;
-            found_role = true;
+            role_count++;
         }
     }
     found_call = false;
-    for(size_t index = 0U; index < model->fact_count && found_role && !found_call; index++)
+    for(size_t index = 0U; index < model->fact_count && role_count == 1U && !found_call; index++)
     {
         const struct p101_wrapper_fact *fact;
         int                             path_comparison;
@@ -369,7 +399,55 @@ static bool boundary_test_wired(const struct p101_env *env, const struct p101_wr
         caller_comparison = p101_strcmp(env, fact->caller_usr, caller_usr);
         found_call        = fact->kind == P101_C_ANALYSIS_CALL && path_comparison == 0 && caller_comparison == 0;
     }
-    return found_role && found_call;
+    return role_count == 1U && found_call;
+}
+
+static bool boundary_string_array(const struct p101_workspace_json *document, size_t array)
+{
+    bool valid;
+
+    valid = document->tokens[array].kind == P101_WORKSPACE_JSON_ARRAY && document->tokens[array].child_count > 0U;
+    for(size_t index = 0U; valid && index < document->tokens[array].child_count; index++)
+    {
+        size_t value;
+
+        valid = p101_workspace_json_array_get(document, array, index, &value);
+        valid = valid && document->tokens[value].kind == P101_WORKSPACE_JSON_STRING;
+        valid = valid && document->tokens[value].end > document->tokens[value].start;
+    }
+    return valid;
+}
+
+static bool boundary_identity_is_unique(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_json *document, size_t boundaries, size_t current, const char *identifier, const char *owner_source, const char *owner_usr)
+{
+    char previous_identifier[BOUNDARY_TEXT_SIZE];
+    char previous_source[P101_WORKSPACE_AUDIT_PATH_SIZE];
+    char previous_usr[BOUNDARY_TEXT_SIZE];
+    bool unique;
+
+    unique = true;
+    for(size_t index = 0U; unique && index < current; index++)
+    {
+        size_t row;
+        bool   loaded;
+        int    identifier_comparison;
+        int    source_comparison;
+        int    usr_comparison;
+
+        loaded = p101_workspace_json_array_get(document, boundaries, index, &row);
+        loaded = loaded && boundary_text(env, err, document, row, "id", previous_identifier, sizeof(previous_identifier));
+        loaded = loaded && boundary_text(env, err, document, row, "owner_source", previous_source, sizeof(previous_source));
+        loaded = loaded && boundary_text(env, err, document, row, "owner_usr", previous_usr, sizeof(previous_usr));
+        if(!loaded)
+        {
+            return false;
+        }
+        identifier_comparison = p101_strcmp(env, identifier, previous_identifier);
+        source_comparison     = p101_strcmp(env, owner_source, previous_source);
+        usr_comparison        = p101_strcmp(env, owner_usr, previous_usr);
+        unique                = identifier_comparison != 0 && (source_comparison != 0 || usr_comparison != 0);
+    }
+    return unique;
 }
 
 static bool boundary_shell_wired(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const char *path, const char *marker)

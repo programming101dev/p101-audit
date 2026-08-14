@@ -16,7 +16,7 @@ set(DARWIN_STANDARD_FLAGS -D_DARWIN_C_SOURCE)
 set(LINUX_STANDARD_FLAGS)
 set(BSD_STANDARD_FLAGS)
 
-set(EXECUTABLE_TARGETS audit_wrappers audit_facts audit_errors audit_modules audit_doctor audit_workspace)
+set(EXECUTABLE_TARGETS audit_wrappers audit_facts audit_errors audit_modules audit_doctor audit_workspace audit_api)
 set(LIBRARY_TARGETS "")
 set(audit_wrappers_OUTPUT_NAME audit-wrappers)
 set(audit_facts_OUTPUT_NAME audit-facts)
@@ -24,6 +24,7 @@ set(audit_errors_OUTPUT_NAME audit-errors)
 set(audit_modules_OUTPUT_NAME audit-modules)
 set(audit_doctor_OUTPUT_NAME audit-doctor)
 set(audit_workspace_OUTPUT_NAME audit-workspace)
+set(audit_api_OUTPUT_NAME audit-api)
 
 set(audit_wrappers_SOURCES
         src/artifacts.c
@@ -65,6 +66,10 @@ set(audit_workspace_SOURCES
         src/instrumentation.c
         src/model.c
         src/output.c
+)
+set(audit_api_SOURCES
+        components/api/src/api.c
+        components/api/src/main.c
 )
 set(audit_errors_SOURCES
         components/error-contract/src/cli.c
@@ -123,12 +128,16 @@ set(audit_workspace_HEADERS
         include/workspace_analysis.h
         include/workspace_json.h
 )
+set(audit_api_HEADERS
+        include/api.h
+)
 
 set(P101_WRAPPER_AUDIT_LIBRARIES
         p101_error
         p101_env
+        p101_json
         p101_record
-        p101_tool_event
+        p101_tool_support
         p101_c
         p101_c_facts
         p101_filesystem
@@ -141,7 +150,8 @@ set(P101_AUDIT_POLICY_LIBRARIES
         p101_error
         p101_env
         p101_record
-        p101_tool_event
+        p101_json
+        p101_tool_support
         p101_c
         p101_c_facts
         p101_cli
@@ -149,10 +159,11 @@ set(P101_AUDIT_POLICY_LIBRARIES
         p101_io
         p101_process
         p101_convert
-        p101_util
+        p101_subprocess
         m
 )
 set(audit_errors_LINK_LIBRARIES ${P101_AUDIT_POLICY_LIBRARIES})
 set(audit_modules_LINK_LIBRARIES ${P101_AUDIT_POLICY_LIBRARIES})
 set(audit_doctor_LINK_LIBRARIES ${P101_AUDIT_POLICY_LIBRARIES})
 set(audit_workspace_LINK_LIBRARIES ${P101_AUDIT_POLICY_LIBRARIES})
+set(audit_api_LINK_LIBRARIES ${P101_AUDIT_POLICY_LIBRARIES})

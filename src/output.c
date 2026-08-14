@@ -3,9 +3,9 @@
 #include <p101_c/p101_stdio.h>
 #include <p101_c/p101_string.h>
 #include <p101_c_facts/facts.h>
-#include <p101_record/record.h>
-#include <p101_tool_event/diagnostic.h>
-#include <p101_tool_event/report.h>
+#include <p101_json/json.h>
+#include <p101_tool_support/diagnostic.h>
+#include <p101_tool_support/report.h>
 
 enum
 {
@@ -24,7 +24,7 @@ void p101_wrapper_output_json_string(const struct p101_env *env, struct p101_err
 {
     int p101_call_result_1;
     P101_TRACE_SCOPE(env);
-    p101_call_result_1 = p101_record_write_json_string(stream, text == NULL ? "" : text);
+    p101_call_result_1 = p101_json_write_string(stream, text == NULL ? "" : text);
     if(p101_call_result_1 != 0)
     {
         P101_ERROR_RAISE_ERRNO(err, errno == 0 ? EIO : errno);

@@ -17,7 +17,7 @@
 #include <p101_filesystem/p101_unistd.h>
 #include <p101_filesystem/sys/p101_stat.h>
 #include <p101_filesystem/sys/p101_statvfs.h>
-#include <p101_util/tool_run.h>
+#include <p101_subprocess/tool_run.h>
 #include <stdio.h>
 
 static int run_p101_wrapper_audit(const struct p101_env *env, struct p101_error *err, const struct arguments *args, const struct doctor_paths *paths);
