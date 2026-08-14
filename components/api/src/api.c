@@ -13,8 +13,21 @@
 
 enum
 {
-    API_MAX_FIELDS = 32,
-    API_TEXT_SIZE  = 512
+    API_MAX_FIELDS           = 32,
+    API_TEXT_SIZE            = 512,
+    API_PLATFORM_TEXT_SIZE   = 16,
+    API_INITIAL_CAPACITY     = 256,
+    API_GLOB_PATTERN_SIZE    = 4096,
+    API_SNAPSHOT_FIELD_COUNT = 8,
+    API_SNAPSHOT_HEADER_SIZE = sizeof("P101API\t1") - 1U,
+    API_FIELD_FUNCTION       = 0,
+    API_FIELD_USR            = 1,
+    API_FIELD_LIBRARY        = 2,
+    API_FIELD_PROVENANCE     = 3,
+    API_FIELD_HEADER         = 4,
+    API_FIELD_LINUX          = 5,
+    API_FIELD_MACOS          = 6,
+    API_FIELD_FREEBSD        = 7
 };
 
 struct api_record
@@ -24,9 +37,9 @@ struct api_record
     char library[API_TEXT_SIZE];
     char provenance[API_TEXT_SIZE];
     char header[API_TEXT_SIZE];
-    char linux[16];
-    char macos[16];
-    char freebsd[16];
+    char linux[API_PLATFORM_TEXT_SIZE];
+    char macos[API_PLATFORM_TEXT_SIZE];
+    char freebsd[API_PLATFORM_TEXT_SIZE];
 };
 
 struct api_snapshot
@@ -86,7 +99,7 @@ static bool api_snapshot_add(const struct p101_env *env, struct p101_error *err,
     added = false;
     if(snapshot->count == snapshot->capacity)
     {
-        capacity = snapshot->capacity == 0U ? 256U : snapshot->capacity * 2U;
+        capacity = snapshot->capacity == 0U ? API_INITIAL_CAPACITY : snapshot->capacity * 2U;
         if(capacity < snapshot->capacity || capacity > SIZE_MAX / sizeof(*snapshot->records))
         {
             P101_ERROR_RAISE_ERRNO(err, EOVERFLOW);
@@ -299,7 +312,7 @@ int p101_api_snapshot(const struct p101_env *env, struct p101_error *err, const 
     struct api_snapshot snapshot;
     glob_t              paths;
     FILE               *stream;
-    char                pattern[4096];
+    char                pattern[API_GLOB_PATTERN_SIZE];
     size_t              index;
     int                 written;
     int                 glob_status;
@@ -383,14 +396,14 @@ static bool load_snapshot(const struct p101_env *env, struct p101_error *err, st
         goto done;
     }
     amount = p101_getline(env, err, &line, &capacity, stream);
-    if(amount < 0 || p101_strncmp(env, line, "P101API\t1", 9U) != 0)
+    if(amount < 0 || p101_strncmp(env, line, "P101API\t1", API_SNAPSHOT_HEADER_SIZE) != 0)
     {
         P101_ERROR_RAISE_ERRNO(err, EINVAL);
         goto close_stream;
     }
     for(;;)
     {
-        char  *fields[8];
+        char  *fields[API_SNAPSHOT_FIELD_COUNT];
         char  *cursor;
         size_t index;
 
@@ -405,7 +418,7 @@ static bool load_snapshot(const struct p101_env *env, struct p101_error *err, st
             line[(size_t)amount] = '\0';
         }
         cursor = line;
-        for(index = 0U; index < 8U; index++)
+        for(index = 0U; index < API_SNAPSHOT_FIELD_COUNT; index++)
         {
             fields[index] = p101_record_split(&cursor);
             if(fields[index] == NULL)
@@ -413,15 +426,16 @@ static bool load_snapshot(const struct p101_env *env, struct p101_error *err, st
                 break;
             }
         }
-        if(index != 8U || cursor != NULL)
+        if(index != API_SNAPSHOT_FIELD_COUNT || cursor != NULL)
         {
             P101_ERROR_RAISE_ERRNO(err, EINVAL);
             break;
         }
         p101_memset(env, &record, 0, sizeof(record));
-        if(!copy_text(env, err, record.function, sizeof(record.function), fields[0]) || !copy_text(env, err, record.usr, sizeof(record.usr), fields[1]) || !copy_text(env, err, record.library, sizeof(record.library), fields[2]) ||
-           !copy_text(env, err, record.provenance, sizeof(record.provenance), fields[3]) || !copy_text(env, err, record.header, sizeof(record.header), fields[4]) || !copy_text(env, err, record.linux, sizeof(record.linux), fields[5]) ||
-           !copy_text(env, err, record.macos, sizeof(record.macos), fields[6]) || !copy_text(env, err, record.freebsd, sizeof(record.freebsd), fields[7]) || !api_snapshot_add(env, err, snapshot, &record))
+        if(!copy_text(env, err, record.function, sizeof(record.function), fields[API_FIELD_FUNCTION]) || !copy_text(env, err, record.usr, sizeof(record.usr), fields[API_FIELD_USR]) ||
+           !copy_text(env, err, record.library, sizeof(record.library), fields[API_FIELD_LIBRARY]) || !copy_text(env, err, record.provenance, sizeof(record.provenance), fields[API_FIELD_PROVENANCE]) ||
+           !copy_text(env, err, record.header, sizeof(record.header), fields[API_FIELD_HEADER]) || !copy_text(env, err, record.linux, sizeof(record.linux), fields[API_FIELD_LINUX]) ||
+           !copy_text(env, err, record.macos, sizeof(record.macos), fields[API_FIELD_MACOS]) || !copy_text(env, err, record.freebsd, sizeof(record.freebsd), fields[API_FIELD_FREEBSD]) || !api_snapshot_add(env, err, snapshot, &record))
         {
             break;
         }

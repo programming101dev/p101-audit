@@ -13,8 +13,9 @@
 
 enum
 {
-    RESPONSIBILITY_ROOT_COUNT = 4,
-    RESPONSIBILITY_NAME_SIZE  = 512
+    RESPONSIBILITY_ROOT_COUNT               = 4,
+    RESPONSIBILITY_NAME_SIZE                = 512,
+    RESPONSIBILITY_CHECKED_REPOSITORY_LIMIT = 128
 };
 
 struct responsibility_scan_paths
@@ -87,7 +88,7 @@ bool p101_workspace_audit_run_source_responsibilities(const struct p101_env *env
         goto done;
     }
     found = p101_workspace_json_object_get(env, &document, 0U, "schema", &row);
-    valid = found && p101_workspace_json_token_equals(env, &document, row, "p101-source-responsibilities-v2");
+    valid = ((found && p101_workspace_json_token_equals(env, &document, row, "p101-source-responsibilities-v2")) != 0);
     if(!valid)
     {
         p101_workspace_audit_add(env, err, result, contract_path, "unexpected source-responsibility schema");
@@ -96,9 +97,9 @@ bool p101_workspace_audit_run_source_responsibilities(const struct p101_env *env
     }
     valid = require_text(env, err, &document, 0U, "does_not_prove", text, sizeof(text), contract_path, result);
     found = p101_workspace_json_object_get(env, &document, 0U, "owners", &owners);
-    valid = found && document.tokens[owners].kind == P101_WORKSPACE_JSON_ARRAY && document.tokens[owners].child_count > 0U && valid;
+    valid = ((found && document.tokens[owners].kind == P101_WORKSPACE_JSON_ARRAY && document.tokens[owners].child_count > 0U && valid) != 0);
     found = p101_workspace_json_object_get(env, &document, 0U, "facades", &facades);
-    valid = found && document.tokens[facades].kind == P101_WORKSPACE_JSON_ARRAY && document.tokens[facades].child_count > 0U && valid;
+    valid = ((found && document.tokens[facades].kind == P101_WORKSPACE_JSON_ARRAY && document.tokens[facades].child_count > 0U && valid) != 0);
     if(!valid)
     {
         p101_workspace_audit_add(env, err, result, contract_path, "source-responsibility register has no owners or facade ratchets");
@@ -179,7 +180,7 @@ static bool require_text(const struct p101_env *env, struct p101_error *err, con
     bool   copied;
 
     found  = p101_workspace_json_object_get(env, document, object, key, &value);
-    copied = found && p101_workspace_json_token_copy(env, err, document, value, output, output_size);
+    copied = ((found && p101_workspace_json_token_copy(env, err, document, value, output, output_size)) != 0);
     if(copied)
     {
         copied = output[0] != '\0';
@@ -242,7 +243,7 @@ static bool excluded_directory(const struct p101_env *env, const char *name)
     }
     if(!excluded)
     {
-        comparison = p101_strncmp(env, name, "build", 5U);
+        comparison = p101_strncmp(env, name, "build", sizeof("build") - 1U);
         excluded   = comparison == 0;
     }
     return excluded;
@@ -279,7 +280,7 @@ done:
     return added;
 }
 
-static bool collect_source_paths(const struct p101_env *env, struct p101_error *err, struct responsibility_scan_paths *paths, const char *directory)
+static bool collect_source_paths(const struct p101_env *env, struct p101_error *err, struct responsibility_scan_paths *paths, const char *directory)    // NOLINT(misc-no-recursion): bounded workspace tree walk.
 {
     char           path[P101_WORKSPACE_AUDIT_PATH_SIZE];
     DIR           *stream;
@@ -424,8 +425,8 @@ static bool validate_owner(const struct p101_env *env, struct p101_error *err, c
     int    comparison;
 
     valid  = require_text(env, err, document, owner, "id", identifier, sizeof(identifier), contract_path, result);
-    valid  = require_text(env, err, document, owner, "owner", owner_name, sizeof(owner_name), contract_path, result) && valid;
-    joined = valid && p101_workspace_audit_join(env, err, owner_root, sizeof(owner_root), workspace, owner_name);
+    valid  = ((require_text(env, err, document, owner, "owner", owner_name, sizeof(owner_name), contract_path, result) && valid) != 0);
+    joined = ((valid && p101_workspace_audit_join(env, err, owner_root, sizeof(owner_root), workspace, owner_name)) != 0);
     if(!joined)
     {
         return false;
@@ -440,7 +441,7 @@ static bool validate_owner(const struct p101_env *env, struct p101_error *err, c
         for(index = 0U; index < document->tokens[markers].child_count; index++)
         {
             found  = p101_workspace_json_array_get(document, markers, index, &value);
-            copied = found && p101_workspace_json_token_copy(env, err, document, value, identity, sizeof(identity));
+            copied = ((found && p101_workspace_json_token_copy(env, err, document, value, identity, sizeof(identity))) != 0);
             if(copied && !fact_identity_under(env, model, P101_C_ANALYSIS_FUNCTION, identity, owner_root))
             {
                 p101_snprintf(env, err, message, sizeof(message), "owner %s lacks declaration identity %s", identifier, identity);
@@ -461,8 +462,8 @@ static bool validate_owner(const struct p101_env *env, struct p101_error *err, c
     for(index = 0U; index < document->tokens[consumers].child_count; index++)
     {
         found  = p101_workspace_json_array_get(document, consumers, index, &value);
-        copied = found && p101_workspace_json_token_copy(env, err, document, value, consumer_name, sizeof(consumer_name));
-        joined = copied && p101_workspace_audit_join(env, err, consumer_root, sizeof(consumer_root), workspace, consumer_name);
+        copied = ((found && p101_workspace_json_token_copy(env, err, document, value, consumer_name, sizeof(consumer_name))) != 0);
+        joined = ((copied && p101_workspace_audit_join(env, err, consumer_root, sizeof(consumer_root), workspace, consumer_name)) != 0);
         if(!joined)
         {
             continue;
@@ -483,8 +484,8 @@ static bool validate_owner(const struct p101_env *env, struct p101_error *err, c
                 for(list_index = 0U; list_index < document->tokens[forbidden_definitions].child_count; list_index++)
                 {
                     found      = p101_workspace_json_array_get(document, forbidden_definitions, list_index, &identity_token);
-                    copied     = found && p101_workspace_json_token_copy(env, err, document, identity_token, identity, sizeof(identity));
-                    comparison = copied ? p101_strcmp(env, fact->usr, identity) : 1;
+                    copied     = ((found && p101_workspace_json_token_copy(env, err, document, identity_token, identity, sizeof(identity))) != 0);
+                    comparison = (int)copied ? p101_strcmp(env, fact->usr, identity) : 1;
                     if(comparison == 0)
                     {
                         p101_snprintf(env, err, message, sizeof(message), "%s redefines owner declaration %s", fact->path, identity);
@@ -497,8 +498,8 @@ static bool validate_owner(const struct p101_env *env, struct p101_error *err, c
                 for(list_index = 0U; list_index < document->tokens[forbidden_calls].child_count; list_index++)
                 {
                     found      = p101_workspace_json_array_get(document, forbidden_calls, list_index, &identity_token);
-                    copied     = found && p101_workspace_json_token_copy(env, err, document, identity_token, identity, sizeof(identity));
-                    comparison = copied ? p101_strcmp(env, fact->usr, identity) : 1;
+                    copied     = ((found && p101_workspace_json_token_copy(env, err, document, identity_token, identity, sizeof(identity))) != 0);
+                    comparison = (int)copied ? p101_strcmp(env, fact->usr, identity) : 1;
                     if(comparison == 0)
                     {
                         p101_snprintf(env, err, message, sizeof(message), "%s bypasses %s with declaration %s", fact->path, identifier, identity);
@@ -532,9 +533,9 @@ static bool validate_facade(const struct p101_env *env, struct p101_error *err, 
     length  = 0U;
     maximum = 0U;
     valid   = require_text(env, err, document, facade, "path", relative, sizeof(relative), contract_path, result);
-    valid   = require_text(env, err, document, facade, "reason", reason, sizeof(reason), contract_path, result) && valid;
+    valid   = ((require_text(env, err, document, facade, "reason", reason, sizeof(reason), contract_path, result) && valid) != 0);
     found   = p101_workspace_json_object_get(env, document, facade, "maximum_lines", &maximum_token);
-    parsed  = found && p101_workspace_json_token_size(env, document, maximum_token, &maximum) && maximum > 0U;
+    parsed  = ((found && p101_workspace_json_token_size(env, document, maximum_token, &maximum) && maximum > 0U) != 0);
     if(!valid || !parsed)
     {
         p101_workspace_audit_add(env, err, result, contract_path, "invalid facade ratchet");
@@ -565,7 +566,7 @@ done:
 
 static bool validate_dependencies(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const struct p101_wrapper_model *model, struct p101_workspace_audit_result *result)
 {
-    char   checked_repositories[128][P101_WORKSPACE_AUDIT_PATH_SIZE];
+    char   checked_repositories[RESPONSIBILITY_CHECKED_REPOSITORY_LIMIT][P101_WORKSPACE_AUDIT_PATH_SIZE];
     char   repository[P101_WORKSPACE_AUDIT_PATH_SIZE];
     char   config_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
     char   target[RESPONSIBILITY_NAME_SIZE];
@@ -740,7 +741,7 @@ static bool include_target(const struct p101_env *env, const char *include_name,
     if(copied)
     {
         length = (size_t)(separator - start);
-        copied = length > 5U && length < target_size && p101_strncmp(env, start, "p101_", 5U) == 0;
+        copied = ((length > sizeof("p101_") - 1U && length < target_size && p101_strncmp(env, start, "p101_", sizeof("p101_") - 1U) == 0) != 0);
         if(copied)
         {
             p101_memcpy(env, target, start, length);

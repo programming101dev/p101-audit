@@ -16,7 +16,7 @@ if (P101_TEST_COVERAGE)
     set(_COV --coverage)
 endif ()
 
-set(P101_LIBS p101_error p101_env p101_record p101_tool_event p101_tool_support p101_c p101_c_facts p101_cli p101_filesystem p101_io p101_process p101_convert p101_subprocess)
+set(P101_LIBS p101_error p101_env p101_json p101_record p101_tool_event p101_tool_support p101_c p101_c_facts p101_cli p101_filesystem p101_io p101_process p101_convert p101_subprocess)
 set(P101_PUBLIC_INCLUDE_DIRS "" CACHE STRING "Extra p101 include dirs")
 set(P101_PUBLIC_LINK_DIRS "" CACHE STRING "Extra p101 link dirs")
 separate_arguments(P101_PUBLIC_INCLUDE_DIRS_LIST NATIVE_COMMAND "${P101_PUBLIC_INCLUDE_DIRS}")

@@ -1,6 +1,11 @@
 #include "workspace_sha256.h"
 #include <stdint.h>
 
+/* SHA-256's dimensions, initial values, round constants, and rotations are
+ * prescribed by FIPS 180-4; replacing each literal with a project-specific
+ * name would obscure the correspondence with the standard. */
+// NOLINTBEGIN(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)
+
 struct sha256_state
 {
     uint32_t      words[8];
@@ -19,7 +24,7 @@ static const uint32_t SHA256_CONSTANTS[64] = {0x428a2f98U, 0x71374491U, 0xb5c0fb
                                               0x27b70a85U, 0x2e1b2138U, 0x4d2c6dfcU, 0x53380d13U, 0x650a7354U, 0x766a0abbU, 0x81c2c92eU, 0x92722c85U, 0xa2bfe8a1U, 0xa81a664bU, 0xc24b8b70U, 0xc76c51a3U, 0xd192e819U, 0xd6990624U, 0xf40e3585U, 0x106aa070U,
                                               0x19a4c116U, 0x1e376c08U, 0x2748774cU, 0x34b0bcb5U, 0x391c0cb3U, 0x4ed8aa4aU, 0x5b9cca4fU, 0x682e6ff3U, 0x748f82eeU, 0x78a5636fU, 0x84c87814U, 0x8cc70208U, 0x90befffaU, 0xa4506cebU, 0xbef9a3f7U, 0xc67178f2U};
 
-void p101_workspace_sha256(const unsigned char *data, size_t length, char output[65])
+void p101_workspace_sha256(const unsigned char *data, size_t length, char output[P101_WORKSPACE_SHA256_TEXT_SIZE])
 {
     static const char   HEX[] = "0123456789abcdef";
     struct sha256_state state;
@@ -39,8 +44,8 @@ void p101_workspace_sha256(const unsigned char *data, size_t length, char output
     sha256_finish(&state, digest);
     for(size_t index = 0U; index < sizeof(digest); index++)
     {
-        output[index * 2U]      = HEX[digest[index] >> 4U];
-        output[index * 2U + 1U] = HEX[digest[index] & 0x0fU];
+        output[index * 2U]        = HEX[digest[index] >> 4U];
+        output[(index * 2U) + 1U] = HEX[digest[index] & 0x0fU];
     }
     output[64] = '\0';
 }
@@ -144,7 +149,7 @@ static void sha256_finish(struct sha256_state *state, unsigned char digest[32])
 {
     uint64_t total_bits;
 
-    total_bits                      = state->bit_count + (uint64_t)state->block_size * 8U;
+    total_bits                      = state->bit_count + ((uint64_t)state->block_size * 8U);
     state->block[state->block_size] = 0x80U;
     state->block_size++;
     if(state->block_size > 56U)
@@ -169,9 +174,11 @@ static void sha256_finish(struct sha256_state *state, unsigned char digest[32])
     sha256_transform(state, state->block);
     for(size_t index = 0U; index < 8U; index++)
     {
-        digest[index * 4U]      = (unsigned char)(state->words[index] >> 24U);
-        digest[index * 4U + 1U] = (unsigned char)(state->words[index] >> 16U);
-        digest[index * 4U + 2U] = (unsigned char)(state->words[index] >> 8U);
-        digest[index * 4U + 3U] = (unsigned char)state->words[index];
+        digest[index * 4U]        = (unsigned char)(state->words[index] >> 24U);
+        digest[(index * 4U) + 1U] = (unsigned char)(state->words[index] >> 16U);
+        digest[(index * 4U) + 2U] = (unsigned char)(state->words[index] >> 8U);
+        digest[(index * 4U) + 3U] = (unsigned char)state->words[index];
     }
 }
+
+// NOLINTEND(cppcoreguidelines-avoid-magic-numbers,readability-magic-numbers)

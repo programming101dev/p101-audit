@@ -22,11 +22,11 @@ static const char *const FAULT_MODES[FAULT_MODE_COUNT] = {"error", "eintr", "tim
 static bool load_contract(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const char *relative, char *path, size_t path_size, struct p101_workspace_json *document);
 static bool add_contract_finding(const struct p101_env *env, struct p101_error *err, struct p101_workspace_audit_result *result, const char *path, const char *message);
 static bool get_required(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_json *document, size_t object, const char *key, size_t *value, struct p101_workspace_audit_result *result, const char *path);
-static bool array_contains(const struct p101_env *env, const struct p101_workspace_json *document, size_t array, const char *value);
+static bool array_contains(const struct p101_workspace_json *document, size_t array, const char *value);
 static bool tokens_equal(const struct p101_env *env, const struct p101_workspace_json *left, size_t left_token, const struct p101_workspace_json *right, size_t right_token);
-static bool admitted_contains(const struct p101_env *env, const struct p101_workspace_json *document, size_t admitted, const char *identity);
+static bool admitted_contains(const struct p101_workspace_json *document, size_t admitted, const char *identity);
 static bool manifest_contains(const struct p101_env *env, struct p101_error *err, const char *path, const struct p101_workspace_json *document, size_t identity);
-static bool fact_identity_exists(const struct p101_env *env, const struct p101_wrapper_model *model, enum p101_c_analysis_kind kind, const struct p101_workspace_json *document, size_t identity);
+static bool fact_identity_exists(const struct p101_wrapper_model *model, enum p101_c_analysis_kind kind, const struct p101_workspace_json *document, size_t identity);
 static bool validate_modes(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_json *contract, const char *contract_path, struct p101_workspace_audit_result *result, size_t *short_array, size_t *uncertain_mode);
 static bool validate_fact_mechanism(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_json *contract, const char *contract_path, const struct p101_wrapper_model *model, size_t admitted, size_t uncertain_mode,
                                     struct p101_workspace_audit_result *result);
@@ -169,7 +169,7 @@ static bool get_required(const struct p101_env *env, struct p101_error *err, con
     return found;
 }
 
-static bool array_contains(const struct p101_env *env, const struct p101_workspace_json *document, size_t array, const char *value)
+static bool array_contains(const struct p101_workspace_json *document, size_t array, const char *value)
 {
     size_t index;
     size_t token;
@@ -207,11 +207,11 @@ static bool tokens_equal(const struct p101_env *env, const struct p101_workspace
     return equal;
 }
 
-static bool admitted_contains(const struct p101_env *env, const struct p101_workspace_json *document, size_t admitted, const char *identity)
+static bool admitted_contains(const struct p101_workspace_json *document, size_t admitted, const char *identity)
 {
     bool contains;
 
-    contains = array_contains(env, document, admitted, identity);
+    contains = array_contains(document, admitted, identity);
     return contains;
 }
 
@@ -281,7 +281,7 @@ done:
     return present;
 }
 
-static bool fact_identity_exists(const struct p101_env *env, const struct p101_wrapper_model *model, enum p101_c_analysis_kind kind, const struct p101_workspace_json *document, size_t identity)
+static bool fact_identity_exists(const struct p101_wrapper_model *model, enum p101_c_analysis_kind kind, const struct p101_workspace_json *document, size_t identity)
 {
     size_t index;
     bool   equal;
@@ -481,7 +481,7 @@ static bool validate_fact_mechanism(const struct p101_env *env, struct p101_erro
         p101_workspace_json_object_get(env, contract, 0U, "modes", &mode);
         p101_workspace_json_object_get(env, contract, mode, FAULT_MODES[index], &mode);
         p101_workspace_json_object_get(env, contract, mode, "kind_usr", &kind_usr);
-        found = fact_identity_exists(env, model, P101_C_ANALYSIS_ENUMERATOR, contract, kind_usr);
+        found = fact_identity_exists(model, P101_C_ANALYSIS_ENUMERATOR, contract, kind_usr);
         if(!found)
         {
             add_contract_finding(env, err, result, contract_path, "fault-kind identity is absent from lib_env");
@@ -537,7 +537,7 @@ static bool validate_fact_mechanism(const struct p101_env *env, struct p101_erro
         recorder_seen = p101_workspace_json_token_equals(env, contract, recorder, fact->usr);
         if(selector_seen || recorder_seen)
         {
-            caller_admitted = admitted_contains(env, contract, admitted, fact->caller_usr);
+            caller_admitted = admitted_contains(contract, admitted, fact->caller_usr);
             if(!caller_admitted)
             {
                 add_contract_finding(env, err, result, contract_path, "undeclared wrapper uses the after-dispatch fault mechanism");
@@ -661,7 +661,7 @@ static bool validate_derived_contracts(const struct p101_env *env, struct p101_e
             has_short = false;
             if(found)
             {
-                has_short = array_contains(env, failure, fault_modes, "short");
+                has_short = array_contains(failure, fault_modes, "short");
             }
             if(has_short)
             {
@@ -711,7 +711,7 @@ static bool validate_derived_contracts(const struct p101_env *env, struct p101_e
             has_short = false;
             if(found)
             {
-                has_short = array_contains(env, lifecycle, fault_modes, "short");
+                has_short = array_contains(lifecycle, fault_modes, "short");
             }
             if(has_short)
             {

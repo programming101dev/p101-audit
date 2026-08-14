@@ -3,6 +3,11 @@
 
 #include <stddef.h>
 
-void p101_workspace_sha256(const unsigned char *data, size_t length, char output[65]);
+enum
+{
+    P101_WORKSPACE_SHA256_TEXT_SIZE = 65
+};
+
+void p101_workspace_sha256(const unsigned char *data, size_t length, char output[P101_WORKSPACE_SHA256_TEXT_SIZE]);
 
 #endif

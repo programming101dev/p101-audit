@@ -11,6 +11,14 @@ struct instrumentation_slot
     size_t      fact_index_plus_one;
 };
 
+enum
+{
+    INSTRUMENTATION_INITIAL_CAPACITY = 16,
+    INSTRUMENTATION_HASH_SEED        = 5381,
+    INSTRUMENTATION_HASH_MULTIPLIER  = 33,
+    INSTRUMENTATION_HASH_REDUCTION   = 104729
+};
+
 static size_t instrumentation_hash(const char *text);
 static bool   instrumentation_insert(const struct p101_env *env, struct instrumentation_slot *slots, size_t capacity, const char *usr, size_t fact_index);
 static size_t instrumentation_lookup(const struct p101_env *env, const struct instrumentation_slot *slots, size_t capacity, const char *usr, size_t missing);
@@ -31,11 +39,12 @@ bool p101_instrumentation_collect(const struct p101_env *env, struct p101_error 
     bool                            inserted;
     bool                            changed;
     bool                            collected;
+    void                           *allocation;
 
     P101_TRACE_SCOPE(env);
     slots          = NULL;
     function_count = 0U;
-    capacity       = 16U;
+    capacity       = INSTRUMENTATION_INITIAL_CAPACITY;
     collected      = false;
     for(size_t index = 0U; index < model->fact_count; index++)
     {
@@ -54,7 +63,8 @@ bool p101_instrumentation_collect(const struct p101_env *env, struct p101_error 
         }
         capacity *= 2U;
     }
-    slots = (struct instrumentation_slot *)p101_calloc(env, err, capacity, sizeof(*slots));
+    allocation = p101_calloc(env, err, capacity, sizeof(*slots));
+    slots      = (struct instrumentation_slot *)allocation;
     if(slots == NULL)
     {
         goto done;
@@ -119,7 +129,7 @@ bool p101_instrumentation_collect(const struct p101_env *env, struct p101_error 
                 continue;
             }
             inserted = instrumentation_merge(&capabilities[caller], &capabilities[callee]);
-            changed  = changed || inserted;
+            changed  = ((changed || inserted) != 0);
         }
     } while(changed);
     collected = true;
@@ -134,15 +144,15 @@ static size_t instrumentation_hash(const char *text)
     size_t        hash;
     unsigned char byte;
 
-    hash = 5381U;
+    hash = INSTRUMENTATION_HASH_SEED;
     while(*text != '\0')
     {
         byte = (unsigned char)*text;
-        if(hash > (SIZE_MAX - byte) / 33U)
+        if(hash > (SIZE_MAX - byte) / INSTRUMENTATION_HASH_MULTIPLIER)
         {
-            hash %= 104729U;
+            hash %= INSTRUMENTATION_HASH_REDUCTION;
         }
-        hash = hash * 33U + byte;
+        hash = (hash * INSTRUMENTATION_HASH_MULTIPLIER) + byte;
         text++;
     }
     return hash;
@@ -151,10 +161,12 @@ static size_t instrumentation_hash(const char *text)
 static bool instrumentation_insert(const struct p101_env *env, struct instrumentation_slot *slots, size_t capacity, const char *usr, size_t fact_index)
 {
     size_t slot;
+    size_t hash;
     bool   inserted;
     int    comparison;
 
-    slot     = instrumentation_hash(usr) & (capacity - 1U);
+    hash     = instrumentation_hash(usr);
+    slot     = hash & (capacity - 1U);
     inserted = false;
     for(size_t probe = 0U; probe < capacity; probe++)
     {
@@ -179,6 +191,7 @@ static bool instrumentation_insert(const struct p101_env *env, struct instrument
 static size_t instrumentation_lookup(const struct p101_env *env, const struct instrumentation_slot *slots, size_t capacity, const char *usr, size_t missing)
 {
     size_t slot;
+    size_t hash;
     size_t found;
     int    comparison;
 
@@ -187,7 +200,8 @@ static size_t instrumentation_lookup(const struct p101_env *env, const struct in
     {
         goto done;
     }
-    slot = instrumentation_hash(usr) & (capacity - 1U);
+    hash = instrumentation_hash(usr);
+    slot = hash & (capacity - 1U);
     for(size_t probe = 0U; probe < capacity; probe++)
     {
         if(slots[slot].usr == NULL)
@@ -240,6 +254,7 @@ static bool instrumentation_same_repository(const struct p101_env *env, const ch
     const char              *right_end;
     size_t                   left_length;
     size_t                   right_length;
+    size_t                   root_length;
     bool                     same;
 
     same       = false;
@@ -251,8 +266,9 @@ static bool instrumentation_same_repository(const struct p101_env *env, const ch
         right_root = p101_strstr(env, right, roots[index]);
         if(left_root != NULL && right_root != NULL)
         {
-            left_root += p101_strlen(env, roots[index]);
-            right_root += p101_strlen(env, roots[index]);
+            root_length = p101_strlen(env, roots[index]);
+            left_root += root_length;
+            right_root += root_length;
             break;
         }
         left_root  = NULL;
@@ -262,13 +278,30 @@ static bool instrumentation_same_repository(const struct p101_env *env, const ch
     {
         goto done;
     }
-    left_end     = p101_strchr(env, left_root, '/');
-    right_end    = p101_strchr(env, right_root, '/');
-    left_length  = left_end == NULL ? p101_strlen(env, left_root) : (size_t)(left_end - left_root);
-    right_length = right_end == NULL ? p101_strlen(env, right_root) : (size_t)(right_end - right_root);
+    left_end  = p101_strchr(env, left_root, '/');
+    right_end = p101_strchr(env, right_root, '/');
+    if(left_end == NULL)
+    {
+        left_length = p101_strlen(env, left_root);
+    }
+    else
+    {
+        left_length = (size_t)(left_end - left_root);
+    }
+    if(right_end == NULL)
+    {
+        right_length = p101_strlen(env, right_root);
+    }
+    else
+    {
+        right_length = (size_t)(right_end - right_root);
+    }
     if(left_length == right_length)
     {
-        same = p101_strncmp(env, left_root, right_root, left_length) == 0;
+        int comparison;
+
+        comparison = p101_strncmp(env, left_root, right_root, left_length);
+        same       = comparison == 0;
     }
 
 done:

@@ -12,9 +12,13 @@
 
 enum
 {
-    INSTRUMENTATION_API_CAPACITY  = 2048,
-    INSTRUMENTATION_FIELD_COUNT   = 16,
-    INSTRUMENTATION_LINE_CAPACITY = 16384
+    INSTRUMENTATION_API_CAPACITY     = 2048,
+    INSTRUMENTATION_FIELD_COUNT      = 16,
+    INSTRUMENTATION_LINE_CAPACITY    = 16384,
+    INSTRUMENTATION_INITIAL_CAPACITY = 16,
+    INSTRUMENTATION_HASH_SEED        = 5381,
+    INSTRUMENTATION_HASH_MULTIPLIER  = 33,
+    INSTRUMENTATION_HASH_REDUCTION   = 104729
 };
 
 struct instrumentation_api
@@ -78,7 +82,6 @@ bool p101_workspace_audit_run_instrumentation(const struct p101_env *env, struct
     fact_capabilities = NULL;
     key               = 0U;
     api_count         = 0U;
-    required_count    = 0U;
     success           = false;
     if(options->facts_path == NULL)
     {
@@ -96,7 +99,7 @@ bool p101_workspace_audit_run_instrumentation(const struct p101_env *env, struct
         goto done;
     }
     valid = p101_workspace_json_object_get(env, &contract, 0U, "schema", &schema);
-    valid = valid && p101_workspace_json_token_equals(env, &contract, schema, "p101-instrumentation-contract-v3");
+    valid = ((valid && p101_workspace_json_token_equals(env, &contract, schema, "p101-instrumentation-contract-v3")) != 0);
     valid = p101_workspace_json_object_get(env, &contract, 0U, "library_roles", &roles) && valid;
     valid = p101_workspace_json_object_get(env, &contract, 0U, "required", &required) && valid;
     if(!valid || contract.tokens[roles].kind != P101_WORKSPACE_JSON_OBJECT || contract.tokens[required].kind != P101_WORKSPACE_JSON_OBJECT)
@@ -135,7 +138,7 @@ bool p101_workspace_audit_run_instrumentation(const struct p101_env *env, struct
                 comparison = p101_strcmp(env, role, "native-wrapper");
                 valid      = comparison == 0;
                 comparison = p101_strcmp(env, role, "traced-api");
-                valid      = valid || comparison == 0;
+                valid      = ((valid || comparison == 0) != 0);
                 if(!valid)
                 {
                     instrumentation_add(env, err, result, contract_path, library, role, "is not a recognized library role");
@@ -315,10 +318,10 @@ static bool instrumentation_load_manifest(const struct p101_env *env, struct p10
             goto close_stream;
         }
         copied = instrumentation_copy(env, err, apis[*api_count].library, sizeof(apis[*api_count].library), library);
-        copied = instrumentation_copy(env, err, apis[*api_count].role, sizeof(apis[*api_count].role), role) && copied;
-        copied = instrumentation_copy(env, err, apis[*api_count].name, sizeof(apis[*api_count].name), fields[function_column]) && copied;
-        copied = instrumentation_copy(env, err, apis[*api_count].usr, sizeof(apis[*api_count].usr), fields[usr_column]) && copied;
-        copied = instrumentation_copy(env, err, apis[*api_count].source, sizeof(apis[*api_count].source), fields[source_column]) && copied;
+        copied = ((instrumentation_copy(env, err, apis[*api_count].role, sizeof(apis[*api_count].role), role) && copied) != 0);
+        copied = ((instrumentation_copy(env, err, apis[*api_count].name, sizeof(apis[*api_count].name), fields[function_column]) && copied) != 0);
+        copied = ((instrumentation_copy(env, err, apis[*api_count].usr, sizeof(apis[*api_count].usr), fields[usr_column]) && copied) != 0);
+        copied = ((instrumentation_copy(env, err, apis[*api_count].source, sizeof(apis[*api_count].source), fields[source_column]) && copied) != 0);
         if(!copied || apis[*api_count].usr[0] == '\0')
         {
             goto close_stream;
@@ -339,15 +342,15 @@ static size_t instrumentation_hash(const char *text)
     size_t        hash;
     unsigned char byte;
 
-    hash = 5381U;
+    hash = INSTRUMENTATION_HASH_SEED;
     while(*text != '\0')
     {
         byte = (unsigned char)*text;
-        if(hash > (SIZE_MAX - byte) / 33U)
+        if(hash > (SIZE_MAX - byte) / INSTRUMENTATION_HASH_MULTIPLIER)
         {
-            hash %= 104729U;
+            hash %= INSTRUMENTATION_HASH_REDUCTION;
         }
-        hash = hash * 33U + byte;
+        hash = (hash * INSTRUMENTATION_HASH_MULTIPLIER) + byte;
         text++;
     }
     return hash;
@@ -422,7 +425,7 @@ static bool instrumentation_assign_facts(const struct p101_env *env, struct p101
     int                              comparison;
 
     slots    = NULL;
-    capacity = 16U;
+    capacity = INSTRUMENTATION_INITIAL_CAPACITY;
     assigned = false;
     while(capacity < api_count * 2U)
     {
@@ -474,7 +477,7 @@ static bool instrumentation_assign_facts(const struct p101_env *env, struct p101
         {
             apis[api_index].function_fact = index;
             apis[api_index].capabilities  = fact_capabilities[index];
-            apis[api_index].has_env       = fact->needs_env || fact_capabilities[index].trace_entry || fact_capabilities[index].trace_exit;
+            apis[api_index].has_env       = fact->needs_env;
             apis[api_index].has_error     = fact->needs_error;
         }
     }
@@ -505,7 +508,7 @@ static bool instrumentation_validate_required(const struct p101_env *env, struct
     int                              comparison;
 
     slots    = NULL;
-    capacity = 16U;
+    capacity = INSTRUMENTATION_INITIAL_CAPACITY;
     key      = 0U;
     checked  = false;
     while(capacity < api_count * 2U)
@@ -562,7 +565,7 @@ static bool instrumentation_validate_required(const struct p101_env *env, struct
             for(size_t capability_index = 0U; capability_index < contract->tokens[capabilities].child_count; capability_index++)
             {
                 valid = p101_workspace_json_array_get(contract, capabilities, capability_index, &token);
-                valid = valid && p101_workspace_json_token_copy(env, err, contract, token, capability, sizeof(capability));
+                valid = ((valid && p101_workspace_json_token_copy(env, err, contract, token, capability, sizeof(capability))) != 0);
                 if(!valid)
                 {
                     goto done;
@@ -650,7 +653,7 @@ static bool instrumentation_write_receipt(const struct p101_env *env, struct p10
     const char *platform;
     const char *machine;
     const char *separator;
-    char        contract_sha256[65];
+    char        contract_sha256[P101_WORKSPACE_SHA256_TEXT_SIZE];
     char        library[P101_WRAPPER_NAME_SIZE];
     size_t      child;
     size_t      key;

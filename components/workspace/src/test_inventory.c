@@ -83,7 +83,7 @@ bool p101_workspace_audit_run_test_inventory(const struct p101_env *env, struct 
         goto done;
     }
     found = p101_workspace_json_object_get(env, &inventory, 0U, "schema", &schema);
-    valid = found && p101_workspace_json_token_equals(env, &inventory, schema, "p101-test-inventory-v1");
+    valid = ((found && p101_workspace_json_token_equals(env, &inventory, schema, "p101-test-inventory-v1")) != 0);
     if(!valid)
     {
         p101_workspace_audit_add(env, err, result, inventory_path, "unexpected test-inventory schema");
@@ -91,7 +91,7 @@ bool p101_workspace_audit_run_test_inventory(const struct p101_env *env, struct 
         goto done;
     }
     valid = require_string(env, err, &inventory, 0U, "does_not_prove", manifest_name, sizeof(manifest_name), inventory_path, result);
-    valid = require_string(env, err, &inventory, 0U, "repository_manifest", manifest_name, sizeof(manifest_name), inventory_path, result) && valid;
+    valid = ((require_string(env, err, &inventory, 0U, "repository_manifest", manifest_name, sizeof(manifest_name), inventory_path, result) && valid) != 0);
     if(!valid)
     {
         success = p101_error_has_no_error(err);
@@ -212,7 +212,7 @@ static bool require_string(const struct p101_env *env, struct p101_error *err, c
     bool   copied;
 
     found  = p101_workspace_json_object_get(env, document, object, key, &value);
-    copied = found && token_copy(env, err, document, value, output, output_size);
+    copied = ((found && token_copy(env, err, document, value, output, output_size)) != 0);
     if(copied)
     {
         copied = output[0] != '\0';
@@ -313,8 +313,8 @@ static bool collect_graph_entries(const struct p101_env *env, struct p101_error 
     for(index = 0U; index < graph->tokens[nodes].child_count; index++)
     {
         found = p101_workspace_json_array_get(graph, nodes, index, &node);
-        found = found && p101_workspace_json_object_get(env, graph, node, "command", &command_array);
-        found = found && p101_workspace_json_array_get(graph, command_array, 0U, &executable);
+        found = ((found && p101_workspace_json_object_get(env, graph, node, "command", &command_array)) != 0);
+        found = ((found && p101_workspace_json_array_get(graph, command_array, 0U, &executable)) != 0);
         if(!found)
         {
             continue;
@@ -438,7 +438,7 @@ static bool collect_exclusions(const struct p101_env *env, struct p101_error *er
     for(index = 0U; index < inventory->tokens[array].child_count; index++)
     {
         found  = p101_workspace_json_array_get(inventory, array, index, &row);
-        copied = found && require_string(env, err, inventory, row, "path", value, sizeof(value), inventory_path, result);
+        copied = ((found && require_string(env, err, inventory, row, "path", value, sizeof(value), inventory_path, result)) != 0);
         if(!copied)
         {
             continue;
@@ -464,7 +464,7 @@ done:
     return success;
 }
 
-static bool collect_scripts(const struct p101_env *env, struct p101_error *err, const char *root, const char *relative, bool recursive, struct inventory_paths *discovered)
+static bool collect_scripts(const struct p101_env *env, struct p101_error *err, const char *root, const char *relative, bool recursive, struct inventory_paths *discovered)    // NOLINT(misc-no-recursion): bounded workspace tree walk.
 {
     char           directory_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
     char           relative_path[P101_WORKSPACE_AUDIT_PATH_SIZE];
@@ -472,12 +472,21 @@ static bool collect_scripts(const struct p101_env *env, struct p101_error *err, 
     struct dirent *entry;
     int            comparison;
     int            close_status;
+    int            written;
     bool           joined;
     bool           is_directory;
     bool           success;
 
     success = false;
-    joined  = relative[0] == '\0' ? p101_snprintf(env, err, directory_path, sizeof(directory_path), "%s", root) >= 0 : p101_workspace_audit_join(env, err, directory_path, sizeof(directory_path), root, relative);
+    if(relative[0] == '\0')
+    {
+        written = p101_snprintf(env, err, directory_path, sizeof(directory_path), "%s", root);
+        joined  = (bool)(written >= 0);
+    }
+    else
+    {
+        joined = p101_workspace_audit_join(env, err, directory_path, sizeof(directory_path), root, relative);
+    }
     if(!joined)
     {
         goto done;
@@ -513,8 +522,8 @@ static bool collect_scripts(const struct p101_env *env, struct p101_error *err, 
         {
             p101_snprintf(env, err, relative_path, sizeof(relative_path), "%s/%s", relative, entry->d_name);
         }
-        comparison = p101_strncmp(env, relative_path, "target/", 7U);
-        if(comparison == 0 || p101_strcmp(env, relative_path, "target") == 0 || p101_strncmp(env, relative_path, ".git/", 5U) == 0 || p101_strcmp(env, relative_path, ".git") == 0)
+        comparison = p101_strncmp(env, relative_path, "target/", sizeof("target/") - 1U);
+        if(comparison == 0 || p101_strcmp(env, relative_path, "target") == 0 || p101_strncmp(env, relative_path, ".git/", sizeof(".git/") - 1U) == 0 || p101_strcmp(env, relative_path, ".git") == 0)
         {
             continue;
         }
@@ -552,12 +561,12 @@ static bool verification_name(const struct p101_env *env, const char *name)
     bool   matches;
 
     length       = p101_strlen(env, name);
-    prefix_check = p101_strncmp(env, name, "check-", 6U);
+    prefix_check = p101_strncmp(env, name, "check-", sizeof("check-") - 1U);
     if(prefix_check != 0)
     {
-        prefix_check = p101_strncmp(env, name, "test-", 5U);
+        prefix_check = p101_strncmp(env, name, "test-", sizeof("test-") - 1U);
     }
-    matches = prefix_check == 0 && length > 3U;
+    matches = ((prefix_check == 0 && length > 3U) != 0);
     if(matches)
     {
         suffix_check = p101_strcmp(env, name + length - 3U, ".sh");
@@ -623,7 +632,6 @@ static bool validate_repository_entries(const struct p101_env *env, struct p101_
         joined = p101_workspace_audit_join(env, err, repository, sizeof(repository), scripts_root, first + 1);
         if(!joined)
         {
-            success = false;
             break;
         }
         if(!path_status(env, P101_ERROR_OPTIONAL, repository, false, true))
@@ -666,7 +674,7 @@ static bool validate_repository_entries(const struct p101_env *env, struct p101_
         result->checks++;
     }
     close_status = p101_fclose(env, P101_ERROR_OPTIONAL, stream);
-    success      = close_status == 0 && p101_error_has_no_error(err);
+    success      = ((close_status == 0 && p101_error_has_no_error(err)) != 0);
 
 done:
     return success;

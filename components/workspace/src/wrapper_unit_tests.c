@@ -10,9 +10,10 @@
 
 enum
 {
-    UNIT_API_CAPACITY  = 2048,
-    UNIT_FIELD_COUNT   = 16,
-    UNIT_LINE_CAPACITY = 16384
+    UNIT_API_CAPACITY   = 2048,
+    UNIT_FIELD_COUNT    = 16,
+    UNIT_LINE_CAPACITY  = 16384,
+    UNIT_TEST_KIND_SIZE = 64
 };
 
 struct unit_api
@@ -22,7 +23,7 @@ struct unit_api
     char usr[P101_WRAPPER_NAME_SIZE];
     char source[P101_WORKSPACE_AUDIT_PATH_SIZE];
     char test_source[P101_WORKSPACE_AUDIT_PATH_SIZE];
-    char test_kind[64];
+    char test_kind[UNIT_TEST_KIND_SIZE];
     bool tested;
 };
 
@@ -75,7 +76,7 @@ bool p101_workspace_audit_run_wrapper_unit_tests(const struct p101_env *env, str
         goto done;
     }
     valid = p101_workspace_json_object_get(env, &contract, 0U, "schema", &value);
-    valid = valid && p101_workspace_json_token_equals(env, &contract, value, "p101-instrumentation-contract-v3");
+    valid = ((valid && p101_workspace_json_token_equals(env, &contract, value, "p101-instrumentation-contract-v3")) != 0);
     valid = p101_workspace_json_object_get(env, &contract, 0U, "library_roles", &roles) && valid;
     if(!valid || contract.tokens[roles].kind != P101_WORKSPACE_JSON_OBJECT)
     {
@@ -109,21 +110,21 @@ bool p101_workspace_audit_run_wrapper_unit_tests(const struct p101_env *env, str
             value      = index;
             valid      = p101_workspace_json_token_copy(env, err, &contract, key, library, sizeof(library));
             valid      = p101_workspace_json_token_copy(env, err, &contract, value, role, sizeof(role)) && valid;
-            comparison = valid ? p101_strcmp(env, role, "infrastructure") : 0;
+            comparison = (int)valid ? p101_strcmp(env, role, "infrastructure") : 0;
             if(valid && comparison != 0)
             {
                 int written;
 
                 written = p101_snprintf(env, err, repo, sizeof(repo), "%s/libraries/%s", options->workspace, library);
-                valid   = written >= 0 && (size_t)written < sizeof(repo);
-                written = valid ? p101_snprintf(env, err, path, sizeof(path), "%s/api-manifest.tsv", repo) : -1;
-                valid   = valid && written >= 0 && (size_t)written < sizeof(path);
+                valid   = ((written >= 0 && (size_t)written < sizeof(repo)) != 0);
+                written = (int)valid ? p101_snprintf(env, err, path, sizeof(path), "%s/api-manifest.tsv", repo) : -1;
+                valid   = ((valid && written >= 0 && (size_t)written < sizeof(path)) != 0);
                 if(!valid || !unit_load_api_manifest(env, err, library, path, apis, &api_count))
                 {
                     unit_add(env, err, result, path, library, "API manifest", "is missing or invalid");
                 }
                 written = p101_snprintf(env, err, path, sizeof(path), "%s/test/unit-test-manifest.tsv", repo);
-                valid   = written >= 0 && (size_t)written < sizeof(path);
+                valid   = ((written >= 0 && (size_t)written < sizeof(path)) != 0);
                 if(!valid || !unit_load_test_manifest(env, err, library, repo, path, apis, api_count, result))
                 {
                     unit_add(env, err, result, path, library, "unit-test manifest", "is missing or invalid");
@@ -269,9 +270,9 @@ static bool unit_load_api_manifest(const struct p101_env *env, struct p101_error
             goto done;
         }
         copied = unit_copy(env, err, apis[*api_count].library, sizeof(apis[*api_count].library), library);
-        copied = unit_copy(env, err, apis[*api_count].name, sizeof(apis[*api_count].name), fields[function_column]) && copied;
-        copied = unit_copy(env, err, apis[*api_count].usr, sizeof(apis[*api_count].usr), fields[usr_column]) && copied;
-        copied = unit_copy(env, err, apis[*api_count].source, sizeof(apis[*api_count].source), fields[source_column]) && copied;
+        copied = ((unit_copy(env, err, apis[*api_count].name, sizeof(apis[*api_count].name), fields[function_column]) && copied) != 0);
+        copied = ((unit_copy(env, err, apis[*api_count].usr, sizeof(apis[*api_count].usr), fields[usr_column]) && copied) != 0);
+        copied = ((unit_copy(env, err, apis[*api_count].source, sizeof(apis[*api_count].source), fields[source_column]) && copied) != 0);
         if(!copied || apis[*api_count].usr[0] == '\0')
         {
             goto done;
@@ -354,7 +355,7 @@ static bool unit_load_test_manifest(const struct p101_env *env, struct p101_erro
             continue;
         }
         copied = unit_copy(env, err, apis[match].test_kind, sizeof(apis[match].test_kind), fields[2]);
-        copied = unit_copy(env, err, apis[match].test_source, sizeof(apis[match].test_source), fields[3]) && copied;
+        copied = ((unit_copy(env, err, apis[match].test_source, sizeof(apis[match].test_source), fields[3]) && copied) != 0);
         if(copied)
         {
             char absolute[P101_WORKSPACE_AUDIT_PATH_SIZE];
@@ -389,7 +390,7 @@ static bool unit_has_call(const struct p101_env *env, const struct p101_wrapper_
         fact            = &model->facts[index];
         path_comparison = p101_strcmp(env, fact->path, path);
         usr_comparison  = p101_strcmp(env, fact->usr, usr);
-        found           = fact->kind == P101_C_ANALYSIS_CALL && path_comparison == 0 && usr_comparison == 0;
+        found           = ((fact->kind == P101_C_ANALYSIS_CALL && path_comparison == 0 && usr_comparison == 0) != 0);
     }
     return found;
 }
