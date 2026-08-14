@@ -38,6 +38,7 @@ static bool   validate_owner(const struct p101_env *env, struct p101_error *err,
 static bool   validate_facade(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_json *document, size_t facade, const char *contract_path, const char *workspace, struct p101_workspace_audit_result *result);
 static bool   validate_dependencies(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, const struct p101_wrapper_model *model, struct p101_workspace_audit_result *result);
 static bool   config_has_target(const struct p101_env *env, const char *text, const char *target);
+static bool   identifier_character(char character);
 static bool   include_target(const struct p101_env *env, const char *include_name, char *target, size_t target_size);
 static size_t count_lines(const char *text);
 
@@ -699,29 +700,49 @@ done:
 
 static bool config_has_target(const struct p101_env *env, const char *text, const char *target)
 {
-    const char *cursor;
-    size_t      length;
-    bool        found;
+    size_t length;
+    size_t text_length;
+    size_t limit;
+    size_t index;
+    bool   found;
+    bool   left_identifier;
+    bool   right_identifier;
+    int    comparison;
 
-    cursor = text;
-    length = p101_strlen(env, target);
-    found  = false;
-    while(cursor != NULL)
+    length      = p101_strlen(env, target);
+    text_length = p101_strlen(env, text);
+    found       = false;
+    if(length <= text_length)
     {
-        cursor = p101_strstr(env, cursor, target);
-        if(cursor == NULL)
+        limit = text_length - length;
+        for(index = 0U; index <= limit && !found; index++)
         {
-            break;
+            comparison = p101_strncmp(env, text + index, target, length);
+            if(comparison == 0)
+            {
+                left_identifier = false;
+                if(index > 0U)
+                {
+                    left_identifier = identifier_character(text[index - 1U]);
+                }
+                right_identifier = false;
+                if(index + length < text_length)
+                {
+                    right_identifier = identifier_character(text[index + length]);
+                }
+                found = ((!(left_identifier || right_identifier)) != 0);
+            }
         }
-        if((cursor == text || !(cursor[-1] == '_' || (cursor[-1] >= '0' && cursor[-1] <= '9') || (cursor[-1] >= 'A' && cursor[-1] <= 'Z') || (cursor[-1] >= 'a' && cursor[-1] <= 'z'))) &&
-           !(cursor[length] == '_' || (cursor[length] >= '0' && cursor[length] <= '9') || (cursor[length] >= 'A' && cursor[length] <= 'Z') || (cursor[length] >= 'a' && cursor[length] <= 'z')))
-        {
-            found = true;
-            break;
-        }
-        cursor++;
     }
     return found;
+}
+
+static bool identifier_character(char character)
+{
+    bool result;
+
+    result = ((character == '_' || (character >= '0' && character <= '9') || (character >= 'A' && character <= 'Z') || (character >= 'a' && character <= 'z')) != 0);
+    return result;
 }
 
 static bool include_target(const struct p101_env *env, const char *include_name, char *target, size_t target_size)
