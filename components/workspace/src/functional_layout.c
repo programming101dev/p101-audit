@@ -465,16 +465,12 @@ static bool collect_files(const struct p101_env *env, struct p101_error *err, co
         {
             break;
         }
-        is_directory = entry->d_type == DT_DIR;
-        if(entry->d_type == DT_UNKNOWN)
+        stat_status = p101_lstat(env, err, child_path, &status_buffer);
+        if(stat_status != 0)
         {
-            stat_status = p101_stat(env, err, child_path, &status_buffer);
-            if(stat_status != 0)
-            {
-                break;
-            }
-            is_directory = S_ISDIR(status_buffer.st_mode);
+            break;
         }
+        is_directory = S_ISDIR(status_buffer.st_mode);
         if(is_directory)
         {
             nested = collect_files(env, err, root, child_relative, suffix, set);
@@ -955,16 +951,12 @@ static bool scan_retired_references(const struct p101_env *env, struct p101_erro
         {
             break;
         }
-        is_directory = entry->d_type == DT_DIR;
-        if(entry->d_type == DT_UNKNOWN)
+        stat_status = p101_lstat(env, err, child_path, &status_buffer);
+        if(stat_status != 0)
         {
-            stat_status = p101_stat(env, err, child_path, &status_buffer);
-            if(stat_status != 0)
-            {
-                break;
-            }
-            is_directory = S_ISDIR(status_buffer.st_mode);
+            break;
         }
+        is_directory = S_ISDIR(status_buffer.st_mode);
         if(is_directory)
         {
             comparison = p101_strcmp(env, entry->d_name, "design");
