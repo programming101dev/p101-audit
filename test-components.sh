@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Additional component suites for the consolidated p101-audit repository.
+# This file is sourced after test.sh establishes the shared test variables.
+# shellcheck disable=SC2154
 
 run_component_tests() {
   local component="$1"
