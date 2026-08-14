@@ -2,18 +2,11 @@
 set -euo pipefail
 
 tool=$1
-audit_root=$(CDPATH='' cd "$(dirname "$0")/../../.." && pwd)
-audit_build_dir=build
-if [ -f "$audit_root/.last-build-dir" ]; then
-  audit_build_dir=$(cat "$audit_root/.last-build-dir")
-fi
-facts_tool=${P101_AUDIT_FACTS:-$audit_root/$audit_build_dir/audit-facts}
 work=$(mktemp -d "${TMPDIR:-/tmp}/audit-errors-test.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 
 cp "$(dirname "$0")/contract_fixture.c" "$work/sample.c"
 cd "$work"
-"$facts_tool" --emit-module-facts "$work/sample.c" >"$work/good.tsv"
 expect() {
   wanted=$1
   shift
@@ -152,5 +145,5 @@ expect 2 "${many_paths[@]:0:64}"
 
 for index in $(seq 1 40); do
   P101_FAULT_CALL=$index P101_FAULT_ERRNO=5 \
-    "$tool" -i "$work/good.tsv" >/dev/null 2>&1 || :
+    "$tool" -i "$work/balanced.tsv" >/dev/null 2>&1 || :
 done
