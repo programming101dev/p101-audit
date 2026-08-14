@@ -37,7 +37,7 @@ struct api_record
     char library[API_TEXT_SIZE];
     char provenance[API_TEXT_SIZE];
     char header[API_TEXT_SIZE];
-    char linux[API_PLATFORM_TEXT_SIZE];
+    char linux_support[API_PLATFORM_TEXT_SIZE];
     char macos[API_PLATFORM_TEXT_SIZE];
     char freebsd[API_PLATFORM_TEXT_SIZE];
 };
@@ -267,7 +267,7 @@ static bool load_manifest(const struct p101_env *env, struct p101_error *err, st
         p101_memcpy(env, record.library, library_start, (size_t)(library_end - library_start));
         if(!copy_text(env, err, record.function, sizeof(record.function), fields[function_field]) || !copy_text(env, err, record.usr, sizeof(record.usr), fields[usr_field]) ||
            !copy_text(env, err, record.provenance, sizeof(record.provenance), provenance_field == SIZE_MAX ? "" : fields[provenance_field]) || !copy_text(env, err, record.header, sizeof(record.header), header_field == SIZE_MAX ? "" : fields[header_field]) ||
-           !copy_text(env, err, record.linux, sizeof(record.linux), linux_field == SIZE_MAX ? "" : fields[linux_field]) || !copy_text(env, err, record.macos, sizeof(record.macos), macos_field == SIZE_MAX ? "" : fields[macos_field]) ||
+           !copy_text(env, err, record.linux_support, sizeof(record.linux_support), linux_field == SIZE_MAX ? "" : fields[linux_field]) || !copy_text(env, err, record.macos, sizeof(record.macos), macos_field == SIZE_MAX ? "" : fields[macos_field]) ||
            !copy_text(env, err, record.freebsd, sizeof(record.freebsd), freebsd_field == SIZE_MAX ? "" : fields[freebsd_field]) || !api_snapshot_add(env, err, snapshot, &record))
         {
             break;
@@ -363,7 +363,7 @@ int p101_api_snapshot(const struct p101_env *env, struct p101_error *err, const 
         const struct api_record *record;
 
         record = &snapshot.records[index];
-        p101_fprintf(env, err, stream, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", record->function, record->usr, record->library, record->provenance, record->header, record->linux, record->macos, record->freebsd);
+        p101_fprintf(env, err, stream, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n", record->function, record->usr, record->library, record->provenance, record->header, record->linux_support, record->macos, record->freebsd);
     }
     p101_fclose(env, err, stream);
     if(p101_error_has_no_error(err))
@@ -434,7 +434,7 @@ static bool load_snapshot(const struct p101_env *env, struct p101_error *err, st
         p101_memset(env, &record, 0, sizeof(record));
         if(!copy_text(env, err, record.function, sizeof(record.function), fields[API_FIELD_FUNCTION]) || !copy_text(env, err, record.usr, sizeof(record.usr), fields[API_FIELD_USR]) ||
            !copy_text(env, err, record.library, sizeof(record.library), fields[API_FIELD_LIBRARY]) || !copy_text(env, err, record.provenance, sizeof(record.provenance), fields[API_FIELD_PROVENANCE]) ||
-           !copy_text(env, err, record.header, sizeof(record.header), fields[API_FIELD_HEADER]) || !copy_text(env, err, record.linux, sizeof(record.linux), fields[API_FIELD_LINUX]) ||
+           !copy_text(env, err, record.header, sizeof(record.header), fields[API_FIELD_HEADER]) || !copy_text(env, err, record.linux_support, sizeof(record.linux_support), fields[API_FIELD_LINUX]) ||
            !copy_text(env, err, record.macos, sizeof(record.macos), fields[API_FIELD_MACOS]) || !copy_text(env, err, record.freebsd, sizeof(record.freebsd), fields[API_FIELD_FREEBSD]) || !api_snapshot_add(env, err, snapshot, &record))
         {
             break;
@@ -512,7 +512,7 @@ int p101_api_compare(const struct p101_env *env, struct p101_error *err, const c
             report_finding(env, err, "P101-API-003", current, "public API moved to another header");
             findings++;
         }
-        if(p101_strcmp(env, previous->linux, "yes") == 0 && p101_strcmp(env, current->linux, "yes") != 0)
+        if(p101_strcmp(env, previous->linux_support, "yes") == 0 && p101_strcmp(env, current->linux_support, "yes") != 0)
         {
             report_finding(env, err, "P101-API-004", current, "public API lost linux support");
             findings++;
