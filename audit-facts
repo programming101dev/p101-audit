@@ -15,11 +15,10 @@ done
 # The acceptance preflight removes generated build trees on exit, so the
 # absence of this executable is a routine state rather than a broken
 # checkout. Name the directory: the caller is usually a generator running
-# from somewhere else in the workspace, and "run ./build.sh" alone does not
-# say where.
+# from somewhere else in the workspace, so name the owning repository.
 printf 'audit-facts: native executable not built.\n' >&2
 printf 'Build it with:\n' >&2
 printf '    cd %s\n' "$root" >&2
-printf '    ./change-compiler.sh -c clang\n' >&2
-printf '    ./build.sh\n' >&2
+printf '    cmake -S . -B build -DP101_BUILD_LEVEL=1\n' >&2
+printf '    cmake --build build\n' >&2
 exit 2

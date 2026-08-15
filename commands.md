@@ -5,9 +5,9 @@ Quick reference for the native C `audit-wrappers`, backed by
 
 | Command | What it does |
 | --- | --- |
-| `./build.sh` | Build the native commands and strict analysis targets |
-| `./test.sh` | Run the native CLI regression tests |
-| `./check.sh` | Run the local gate |
+| `cmake --build build` | Build the native commands and strict analysis targets |
+| `cmake -S . -B build -DP101_BUILD_LEVEL=2 && cmake --build build` | Run the native CLI regression tests |
+| `cmake -S . -B build -DP101_BUILD_LEVEL=3 && cmake --build build` | Run the local gate |
 | `./audit-wrappers src include` | Find calls that bypass available wrappers, with replacement hints |
 | `./audit-wrappers --compile-db compile_commands.json src include` | Audit with exact compiler flags from a compile database |
 | `./audit-wrappers -d:json src include` | Emit JSON |

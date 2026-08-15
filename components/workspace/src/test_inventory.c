@@ -33,7 +33,7 @@ static bool collect_exclusions(const struct p101_env *env, struct p101_error *er
                                struct p101_workspace_audit_result *result);
 static bool collect_scripts(const struct p101_env *env, struct p101_error *err, const char *root, const char *relative, bool recursive, struct inventory_paths *discovered);
 static bool verification_name(const struct p101_env *env, const char *name);
-static bool validate_repository_entries(const struct p101_env *env, struct p101_error *err, const char *manifest_path, const char *scripts_root, const struct inventory_paths *entry_names, struct p101_workspace_audit_result *result);
+static bool validate_repository_entries(const struct p101_env *env, struct p101_error *err, const char *manifest_path, const char *scripts_root, struct p101_workspace_audit_result *result);
 
 bool p101_workspace_audit_run_test_inventory(const struct p101_env *env, struct p101_error *err, const struct p101_workspace_audit_options *options, struct p101_workspace_audit_result *result)
 {
@@ -131,7 +131,7 @@ bool p101_workspace_audit_run_test_inventory(const struct p101_env *env, struct 
     }
     if(valid)
     {
-        valid = validate_repository_entries(env, err, manifest_path, options->scripts_root, &entry_names, result);
+        valid = validate_repository_entries(env, err, manifest_path, options->scripts_root, result);
     }
     if(!valid)
     {
@@ -581,7 +581,7 @@ static bool verification_name(const struct p101_env *env, const char *name)
     return matches;
 }
 
-static bool validate_repository_entries(const struct p101_env *env, struct p101_error *err, const char *manifest_path, const char *scripts_root, const struct inventory_paths *entry_names, struct p101_workspace_audit_result *result)
+static bool validate_repository_entries(const struct p101_env *env, struct p101_error *err, const char *manifest_path, const char *scripts_root, struct p101_workspace_audit_result *result)
 {
     char                   line[INVENTORY_LINE_SIZE];
     char                   repository[P101_WORKSPACE_AUDIT_PATH_SIZE];
@@ -593,7 +593,6 @@ static bool validate_repository_entries(const struct p101_env *env, struct p101_
     const char            *second;
     char                  *language;
     size_t                 second_offset;
-    size_t                 index;
     int                    close_status;
     bool                   joined;
     bool                   success;
@@ -627,7 +626,7 @@ static bool validate_repository_entries(const struct p101_env *env, struct p101_
         line[second_offset]                           = '\0';
         language                                      = line + second_offset + 1U;
         language[p101_strcspn(env, language, "\r\n")] = '\0';
-        if(p101_strcmp(env, language, "c") != 0 && p101_strcmp(env, language, "cxx") != 0 && p101_strcmp(env, language, "python") != 0 && p101_strcmp(env, language, "c-bootstrap") != 0)
+        if(p101_strcmp(env, language, "c") != 0 && p101_strcmp(env, language, "cxx") != 0 && p101_strcmp(env, language, "c-reference") != 0 && p101_strcmp(env, language, "python") != 0 && p101_strcmp(env, language, "c-bootstrap") != 0)
         {
             p101_workspace_audit_add(env, err, result, manifest_path, "unsupported repository language");
         }
@@ -647,30 +646,20 @@ static bool validate_repository_entries(const struct p101_env *env, struct p101_
             continue;
         }
         path_list_add(env, err, &repositories, repository);
-        for(index = 0U; index < entry_names->count; index++)
+        if(p101_strcmp(env, language, "c") == 0 || p101_strcmp(env, language, "cxx") == 0)
         {
-            joined = p101_workspace_audit_join(env, err, path, sizeof(path), repository, entry_names->values[index]);
-            if(joined && p101_workspace_audit_file_exists(env, P101_ERROR_OPTIONAL, path) && !path_status(env, P101_ERROR_OPTIONAL, path, true, false))
+            bool has_build_model;
+
+            p101_workspace_audit_join(env, err, path, sizeof(path), repository, "CMakeLists.txt");
+            has_build_model = p101_workspace_audit_file_exists(env, P101_ERROR_OPTIONAL, path);
+            if(!has_build_model)
             {
-                p101_workspace_audit_add(env, err, result, path, "repository entry point is not executable");
+                p101_workspace_audit_join(env, err, path, sizeof(path), repository, "Makefile");
+                has_build_model = p101_workspace_audit_file_exists(env, P101_ERROR_OPTIONAL, path);
             }
-        }
-        p101_workspace_audit_join(env, err, path, sizeof(path), repository, "test/CMakeLists.txt");
-        if(p101_workspace_audit_file_exists(env, P101_ERROR_OPTIONAL, path))
-        {
-            p101_workspace_audit_join(env, err, path, sizeof(path), repository, "test.sh");
-            if(!path_status(env, P101_ERROR_OPTIONAL, path, false, false))
+            if(!has_build_model)
             {
-                p101_workspace_audit_add(env, err, result, repository, "unit-test tree has no test.sh");
-            }
-        }
-        p101_workspace_audit_join(env, err, path, sizeof(path), repository, "fuzz/CMakeLists.txt");
-        if(p101_workspace_audit_file_exists(env, P101_ERROR_OPTIONAL, path))
-        {
-            p101_workspace_audit_join(env, err, path, sizeof(path), repository, "fuzz.sh");
-            if(!path_status(env, P101_ERROR_OPTIONAL, path, false, false))
-            {
-                p101_workspace_audit_add(env, err, result, repository, "fuzz tree has no fuzz.sh");
+                p101_workspace_audit_add(env, err, result, repository, "C/C++ repository has no CMake or Make build model");
             }
         }
         result->checks++;

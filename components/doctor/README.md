@@ -109,6 +109,6 @@ path and hash.
 Configure a compiler once, then run the gate:
 
 ```sh
-./change-compiler.sh -c clang
-./check.sh
+cmake -S . -B build -DCMAKE_C_COMPILER=clang -DP101_BUILD_LEVEL=1
+cmake -S . -B build -DP101_BUILD_LEVEL=3 && cmake --build build
 ```

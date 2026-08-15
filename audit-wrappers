@@ -12,5 +12,5 @@ for candidate in "$build_dir" build-clang build-clang-22 build; do
         exec "$root/$candidate/audit-wrappers" "$@"
     fi
 done
-echo "audit-wrappers: native executable not built; run ./change-compiler.sh and ./build.sh" >&2
+echo "audit-wrappers: native executable not built; configure and build this repository with CMake" >&2
 exit 2
