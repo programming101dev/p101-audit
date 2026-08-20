@@ -7,6 +7,7 @@
 #include <p101_filesystem/p101_glob.h>
 #include <p101_io/p101_stdio.h>
 #include <p101_record/record.h>
+#include <p101_tool_support/diagnostic.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdlib.h>
@@ -468,7 +469,33 @@ static const struct api_record *find_record(const struct p101_env *env, const st
 
 static int report_finding(const struct p101_env *env, struct p101_error *err, const char *identifier, const struct api_record *record, const char *message)
 {
-    return p101_fprintf(env, err, stderr, "%s:1:1: error: %s: %s [%s]\n", record->header[0] == '\0' ? "api-manifest.tsv" : record->header, record->function, message, identifier);
+    struct p101_tool_diagnostic diagnostic;
+    char                        detail[API_TEXT_SIZE];
+    const char                 *path;
+    int                         format_status;
+    int                         status;
+
+    path          = record->header[0] == '\0' ? "api-manifest.tsv" : record->header;
+    format_status = snprintf(detail, sizeof(detail), "%s: %s", record->function, message);
+    if(format_status < 0 || (size_t)format_status >= sizeof(detail))
+    {
+        P101_ERROR_RAISE_ERRNO(err, EOVERFLOW);
+        status = -1;
+        goto done;
+    }
+    status = p101_tool_diagnostic_initialize_id(&diagnostic, identifier, P101_TOOL_DIAGNOSTIC_ERROR, path, 1U, 1U, record->function, detail);
+    if(status == 0)
+    {
+        status = p101_tool_diagnostic_write(stderr, P101_TOOL_DIAGNOSTIC_TEXT, &diagnostic);
+    }
+    if(status != 0)
+    {
+        P101_ERROR_RAISE_ERRNO(err, errno == 0 ? EIO : errno);
+    }
+
+done:
+    (void)env;
+    return status;
 }
 
 int p101_api_compare(const struct p101_env *env, struct p101_error *err, const char *old_snapshot, const char *new_snapshot)
