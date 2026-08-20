@@ -41,6 +41,14 @@ If no path is supplied, `src` is scanned.
 | `P101-ERR-007` | A function other than `main` terminates the process instead of returning a status or raising through `p101_error`. |
 | `P101-ERR-008` | A return is not the function's final top-level statement, or the function contains more than one explicit exit point. |
 | `P101-ERR-009` | A call is embedded in an argument, condition, return, cast, arithmetic operation, or another larger expression instead of being isolated in its own statement or named variable. |
+| `P101-MEM-001` | A statically provable zero-size allocation is requested. Runtime observation also reports a zero-size allocation that was not constant in source. |
+| `P101-MEM-002` | A restricted copy has provably identical source and destination objects. |
+| `P101-THREAD-001` | A thread-creation argument refers to automatic storage that may expire before the thread finishes. |
+| `P101-SIGNAL-001` | Code reachable from a registered signal handler accesses mutable shared storage outside the portable signal-safe forms. |
+| `P101-SIGNAL-002` | Code reachable from a registered signal handler calls an external operation outside the portable async-signal-safe set. |
+| `P101-ENV-001` | A borrowed environment, locale, or static-library result is used after a semantic invalidation operation. |
+| `P101-FILE-001` | The same pathname object is checked and later used by a separate operation, creating a TOCTOU window. |
+| `P101-MOD-028` | Direct recursive control flow has no explicit bounded-depth semantic contract. |
 
 Process termination is an application-boundary decision. Helpers, libraries,
 and CLI parsers must return a status or raise an error so `main` retains
@@ -182,6 +190,33 @@ signature recorded by libclang. The discard check relies on the p101 API
 convention that fallible wrappers take `env, err` as their first two arguments.
 C acquisition and parsing belong to `lib_c_facts`; this tool owns only the
 error-contract policy.
+
+The security checks use resolved declaration identities, storage duration,
+canonical types, call edges, and semantic roles. They do not classify variables
+or user-defined functions by spelling. The fixed function identities in the
+[POSIX.1-2024 async-signal-safe table](https://pubs.opengroup.org/onlinepubs/9799919799/functions/V2_chap02.html)
+are the standard API boundary, not a naming heuristic. A recursive function may carry the reviewed
+`p101:recursion:bounded` role. An atomic object may carry
+`p101:signal:lock-free-atomic` only when the target contract proves that its
+operations are lock-free.
+
+Signal reachability starts at handlers directly visible to a scanned
+registration call and follows calls to functions defined in the admitted
+translation units. It also recognizes the ordinary `sigaction` pattern when a
+function is assigned to a function-pointer member and that same resolved object
+is passed to the registration call. Function pointers selected dynamically,
+handler addresses hidden behind more general data flow, unscanned callees, and
+platform extensions to the portable async-signal-safe set remain blind spots. The rule deliberately
+uses the portable baseline: a platform-specific function being safe does not
+make it acceptable on every supported platform. Preservation of `errno` across
+a handler is not yet proven by this analysis.
+
+The lifetime and TOCTOU rules are intentionally narrow. They diagnose direct
+automatic-storage escape, direct borrowed-result invalidation, identical
+restricted-copy objects, constant zero sizes, and a check/use pair over the
+same resolved pathname object. Aliasing through aggregates, pointer arithmetic,
+interprocedural ownership transfer, runtime range overlap, and filesystem
+changes by other actors require runtime evidence or review.
 
 ## Exit status
 

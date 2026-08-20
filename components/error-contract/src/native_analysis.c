@@ -119,7 +119,7 @@ static bool apply_record(const struct p101_env *env, struct p101_error *err, con
                                           false,
                                           "Too many events in native analysis.");
         }
-        else if(record->has_env_parameter || record->has_error_parameter)
+        else
         {
             p101_contract_model_add_event(env,
                                           err,

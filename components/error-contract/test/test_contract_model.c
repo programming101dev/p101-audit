@@ -69,12 +69,13 @@ static void apply_kind(struct contract_model *model, enum p101_c_fact_kind kind,
 
 static void test_model_fact_kinds_and_limits(void)
 {
-    const char *notes[] = {"ENV_CONTRACT", "ERROR_CONTRACT", "ENV_USE", "ERROR_USE", "TYPE_SEMANTIC_ROLE:p101:trace-scope", "ERROR_CHECK", "ERROR_OPTIONAL", "ERROR_DISCARD", "ERROR_PROPAGATED", "ERROR_UNCHECKED_CHAIN", "CALL_NOT_ISOLATED", "OTHER"};
-    char        dst[8];
-    char        long_line[READ_BUF_LEN];
-    FILE       *stream;
-    char        exact_line[READ_BUF_LEN];
-    char        double_line[(READ_BUF_LEN * 2U) + 1U];
+    const char *notes[] =
+        {"ENV_CONTRACT", "ERROR_CONTRACT", "ENV_USE", "ERROR_USE", "TYPE_SEMANTIC_ROLE:p101:trace-scope", "ERROR_CHECK", "ERROR_OPTIONAL", "ERROR_DISCARD", "ERROR_PROPAGATED", "ERROR_UNCHECKED_CHAIN", "ERROR_OUTPUT_UNCHECKED", "CALL_NOT_ISOLATED", "OTHER"};
+    char  dst[8];
+    char  long_line[READ_BUF_LEN];
+    FILE *stream;
+    char  exact_line[READ_BUF_LEN];
+    char  double_line[(READ_BUF_LEN * 2U) + 1U];
 
     apply_kind(model, P101_C_FACT_KIND_UNKNOWN, "", 0U, false, false);
     apply_kind(model, (enum p101_c_fact_kind)99, "", 0U, false, false);
@@ -321,6 +322,63 @@ static void test_function_boundaries_and_unmatched_optional_marker(void)
     TEST_ASSERT_EQUAL_size_t(1U, report.findings);
 }
 
+static void initialize_security_function(struct contract_function *function, const char *name, const char *usr, size_t line)
+{
+    p101_strncpy(env, function->path, "secure.c", sizeof(function->path));
+    p101_strncpy(env, function->name, name, sizeof(function->name));
+    p101_strncpy(env, function->usr, usr, sizeof(function->usr));
+    function->line = line;
+}
+
+static void initialize_security_event(struct contract_event *event, enum contract_event_kind kind, const char *caller, const char *caller_usr, const char *usr, size_t line)
+{
+    event->kind = kind;
+    event->line = line;
+    p101_strncpy(env, event->path, "secure.c", sizeof(event->path));
+    p101_strncpy(env, event->caller, caller, sizeof(event->caller));
+    p101_strncpy(env, event->caller_usr, caller_usr, sizeof(event->caller_usr));
+    p101_strncpy(env, event->usr, usr, sizeof(event->usr));
+}
+
+static void test_security_semantic_findings_and_clean_signal_path(void)
+{
+    struct contract_report report;
+    struct arguments       args;
+
+    p101_memset(env, &args, 0, sizeof(args));
+    model->function_count = 3U;
+    initialize_security_function(&model->functions[0], "worker", "c:secure.c@F@worker", 1U);
+    initialize_security_function(&model->functions[1], "handler", "c:secure.c@F@handler", 100U);
+    initialize_security_function(&model->functions[2], "signal_helper", "c:secure.c@F@signal_helper", 200U);
+
+    model->event_count = 11U;
+    initialize_security_event(&model->events[0], CONTRACT_EVENT_ZERO_SIZE_ALLOCATION, "worker", "c:secure.c@F@worker", "c:@F@malloc", 10U);
+    initialize_security_event(&model->events[1], CONTRACT_EVENT_OVERLAPPING_RESTRICTED_COPY, "worker", "c:secure.c@F@worker", "c:@F@memcpy", 11U);
+    initialize_security_event(&model->events[2], CONTRACT_EVENT_THREAD_AUTOMATIC_STORAGE_ESCAPE, "worker", "c:secure.c@F@worker", "c:@F@pthread_create", 12U);
+    initialize_security_event(&model->events[3], CONTRACT_EVENT_ENV_BORROWED_POINTER_INVALIDATED, "worker", "c:secure.c@F@worker", "", 13U);
+    initialize_security_event(&model->events[4], CONTRACT_EVENT_PATH_TOCTOU, "worker", "c:secure.c@F@worker", "c:@F@open", 14U);
+    initialize_security_event(&model->events[5], CONTRACT_EVENT_RECURSIVE_CALL, "worker", "c:secure.c@F@worker", "c:secure.c@F@worker", 15U);
+    initialize_security_event(&model->events[6], CONTRACT_EVENT_SIGNAL_HANDLER_REGISTERED, "handler", "c:secure.c@F@handler", "", 101U);
+    initialize_security_event(&model->events[7], CONTRACT_EVENT_CALL, "handler", "c:secure.c@F@handler", "c:secure.c@F@signal_helper", 102U);
+    initialize_security_event(&model->events[8], CONTRACT_EVENT_CALL, "handler", "c:secure.c@F@handler", "c:@F@write", 103U);
+    initialize_security_event(&model->events[9], CONTRACT_EVENT_SIGNAL_SHARED_OBJECT_ACCESS, "signal_helper", "c:secure.c@F@signal_helper", "", 201U);
+    initialize_security_event(&model->events[10], CONTRACT_EVENT_CALL, "signal_helper", "c:secure.c@F@signal_helper", "c:@F@printf", 202U);
+
+    p101_error_contract_report_begin(env, error, &report, &args);
+    p101_error_contract_test_analyze(env, error, model, &report);
+    TEST_ASSERT_EQUAL_size_t(8U, report.findings);
+
+    p101_memset(env, model, 0, sizeof(*model));
+    model->function_count = 1U;
+    initialize_security_function(&model->functions[0], "handler", "c:secure.c@F@handler", 1U);
+    model->event_count = 2U;
+    initialize_security_event(&model->events[0], CONTRACT_EVENT_SIGNAL_HANDLER_REGISTERED, "handler", "c:secure.c@F@handler", "", 2U);
+    initialize_security_event(&model->events[1], CONTRACT_EVENT_CALL, "handler", "c:secure.c@F@handler", "c:@F@write", 3U);
+    p101_error_contract_report_begin(env, error, &report, &args);
+    p101_error_contract_test_analyze(env, error, model, &report);
+    TEST_ASSERT_EQUAL_size_t(0U, report.findings);
+}
+
 int main(void)
 {
     UNITY_BEGIN();
@@ -329,5 +387,6 @@ int main(void)
     RUN_TEST(test_ownership_imbalance_findings);
     RUN_TEST(test_local_contracts_and_optional_boundaries);
     RUN_TEST(test_function_boundaries_and_unmatched_optional_marker);
+    RUN_TEST(test_security_semantic_findings_and_clean_signal_path);
     return UNITY_END();
 }

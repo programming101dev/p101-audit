@@ -134,7 +134,7 @@ static void apply_fact(const struct p101_env *env, struct p101_error *err, struc
             {
                 add_event(env, err, model, CONTRACT_EVENT_PROCESS_TERMINATION, fact);
             }
-            else if(fact->has_env_parameter || fact->has_error_parameter)
+            else
             {
                 add_event(env, err, model, CONTRACT_EVENT_CALL, fact);
             }

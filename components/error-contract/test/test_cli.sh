@@ -48,6 +48,19 @@ for diagnostic_id in \
 do
   grep -q "$diagnostic_id" "$work/stdout"
 done
+for diagnostic_id in \
+  P101-MEM-001 \
+  P101-MEM-002 \
+  P101-THREAD-001 \
+  P101-SIGNAL-001 \
+  P101-SIGNAL-002 \
+  P101-ENV-001 \
+  P101-FILE-001 \
+  P101-MOD-028
+do
+  grep -q "$diagnostic_id" "$work/stdout"
+done
+grep -q 'playgrounds/blob/main/lessons/secure-semantics.md' "$work/stdout"
 expect 1 -d:json -v "$work/sample.c"
 grep -q '"schema":"p101-tool-report-v1"' "$work/stdout"
 grep -q '"tool":"audit-errors"' "$work/stdout"
@@ -63,6 +76,52 @@ set -e
 grep -q '"message":' "$work/both.json"
 grep -q ': error:' "$work/both.txt"
 expect 1 -q "$work/sample.c"
+cat >"$work/secure-clean.c" <<'SOURCE'
+#define P101_SEMANTIC_ROLE(role) __attribute__((annotate(role)))
+#include <signal.h>
+typedef long signed_size_t;
+static volatile sig_atomic_t signal_state;
+static int thread_storage;
+static const char signal_text[] = "signal\n";
+void *malloc(unsigned long) P101_SEMANTIC_ROLE("p101:allocation");
+void *memcpy(void *restrict, const void *restrict, unsigned long) P101_SEMANTIC_ROLE("p101:memory:restricted-copy");
+int semantic_thread_create(void *, void *) P101_SEMANTIC_ROLE("p101:thread:create");
+char *semantic_environment_get(const char *) P101_SEMANTIC_ROLE("p101:environment:borrowed-result");
+int semantic_environment_set(const char *, const char *) P101_SEMANTIC_ROLE("p101:environment:invalidates-borrowed");
+signed_size_t write(int, const void *, unsigned long);
+static void handler(int signal_number) {
+  signed_size_t written;
+  signal_state = signal_number;
+  written = write(2, signal_text, sizeof(signal_text) - 1U);
+  signal_state = written < 0;
+}
+static int bounded_recursion(int value) P101_SEMANTIC_ROLE("p101:recursion:bounded");
+static int bounded_recursion(int value) {
+  int result = value;
+  if(value > 0) { result = bounded_recursion(value - 1); }
+  return result;
+}
+int main(void) {
+  char destination[4];
+  char source[4] = {0};
+  char *borrowed;
+  int result;
+  void *allocation;
+  void (*prior)(int);
+  allocation = malloc(1);
+  allocation = memcpy(destination, source, 1);
+  result = semantic_thread_create(0, &thread_storage);
+  borrowed = semantic_environment_get("P101");
+  result += *borrowed;
+  result = semantic_environment_set("P101", "1");
+  prior = signal(2, handler);
+  result = bounded_recursion(2);
+  result += allocation != 0;
+  result += prior != 0;
+  return result == 0 ? 0 : 0;
+}
+SOURCE
+expect 0 -S "$work/secure-clean.c"
 cat >"$work/balanced.tsv" <<'FACTS'
 P101FACT	8	CALL	balanced.c	balanced	0	1	p101_error_create	0	0	0	balanced	c:@F@p101_error_create	c:@F@balanced	0	0
 P101FACT	8	CALL	balanced.c	balanced	0	2	p101_error_destroy	0	0	0	balanced	c:@F@p101_error_destroy	c:@F@balanced	0	0
@@ -102,6 +161,32 @@ P101FACT	8	NOTE	call-result.c	call-result	0	3	CALL_NOT_ISOLATED	helper	5	c:@F@he
 FACTS
 expect 1 -i "$work/call-result.tsv"
 grep -q 'P101-ERR-009' "$work/stdout"
+cat >"$work/error-output.tsv" <<'FACTS'
+P101FACT	8	FUNCTION	error-output.c	error-output	0	1	helper	1	0	c:@F@helper	0	20	int (void)	int	0
+P101FACT	8	NOTE	error-output.c	error-output	0	3	ERROR_OUTPUT_UNCHECKED	helper	5	c:@F@helper	4	12
+FACTS
+expect 1 -i "$work/error-output.tsv"
+grep -q 'P101-ERR-010' "$work/stdout"
+cat >"$work/semantic-practices.tsv" <<'FACTS'
+P101FACT	8	FUNCTION	semantic.c	semantic	0	1	helper	1	0	c:@F@helper	0	100	int (void)	int	0
+P101FACT	8	NOTE	semantic.c	semantic	0	3	MUST_CHECK_RESULT_DISCARDED	helper	5	c:@F@helper	4	12
+P101FACT	8	NOTE	semantic.c	semantic	0	4	ERROR_CLEANUP_SHADOW	helper	5	c:@F@helper	13	20
+P101FACT	8	NOTE	semantic.c	semantic	0	5	PARTIAL_RESULT_DISCARDED	helper	5	c:@F@helper	21	30
+P101FACT	8	NOTE	semantic.c	semantic	0	6	UNCERTAIN_PROGRESS_RETRIED	helper	5	c:@F@helper	31	40
+P101FACT	8	NOTE	semantic.c	semantic	0	7	CONDITION_WAIT_OUTSIDE_LOOP	helper	5	c:@F@helper	41	50
+P101FACT	8	NOTE	semantic.c	semantic	0	8	POST_FORK_UNSAFE_CALL	helper	5	c:@F@helper	51	60
+FACTS
+expect 1 -i "$work/semantic-practices.tsv"
+for diagnostic_id in \
+  P101-ERR-011 \
+  P101-ERR-012 \
+  P101-IO-001 \
+  P101-RETRY-001 \
+  P101-SYNC-006 \
+  P101-PROC-002
+do
+  grep -q "$diagnostic_id" "$work/stdout"
+done
 cat >"$work/main-exit.tsv" <<'FACTS'
 P101FACT	8	FUNCTION	main.c	main	0	1	main	1	0	c:@F@main	0	0	int (void)	int	0
 P101FACT	8	CALL	main.c	main	0	3	exit	0	0	0	main	c:@F@exit	c:@F@main	0	0

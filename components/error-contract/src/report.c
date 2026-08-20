@@ -35,10 +35,12 @@ void p101_error_contract_report_begin(const struct p101_env *env, struct p101_er
 
 void p101_error_contract_report_finding(const struct p101_env *env, struct p101_error *err, struct contract_report *report, enum p101_error_contract_rule rule_kind, const char *path, size_t line, const char *function_name, const char *message)
 {
-    static const p101_tool_finding rules[] =
-        {P101_TOOL_FINDING_ERR_001, P101_TOOL_FINDING_ERR_002, P101_TOOL_FINDING_ERR_003, P101_TOOL_FINDING_ERR_004, P101_TOOL_FINDING_ERR_005, P101_TOOL_FINDING_ERR_006, P101_TOOL_FINDING_ERR_007, P101_TOOL_FINDING_ERR_008, P101_TOOL_FINDING_ERR_009};
-    struct p101_tool_diagnostic diagnostic;
-    int                         status;
+    static const p101_tool_finding rules[] = {P101_TOOL_FINDING_ERR_001,    P101_TOOL_FINDING_ERR_002,   P101_TOOL_FINDING_ERR_003,  P101_TOOL_FINDING_ERR_004,    P101_TOOL_FINDING_ERR_005,    P101_TOOL_FINDING_ERR_006,
+                                              P101_TOOL_FINDING_ERR_007,    P101_TOOL_FINDING_ERR_008,   P101_TOOL_FINDING_ERR_009,  P101_TOOL_FINDING_ERR_010,    P101_TOOL_FINDING_ERR_011,    P101_TOOL_FINDING_ERR_012,
+                                              P101_TOOL_FINDING_IO_001,     P101_TOOL_FINDING_RETRY_001, P101_TOOL_FINDING_SYNC_006, P101_TOOL_FINDING_PROC_002,   P101_TOOL_FINDING_MEM_001,    P101_TOOL_FINDING_MEM_002,
+                                              P101_TOOL_FINDING_THREAD_001, P101_TOOL_FINDING_ENV_001,   P101_TOOL_FINDING_FILE_001, P101_TOOL_FINDING_SIGNAL_001, P101_TOOL_FINDING_SIGNAL_002, P101_TOOL_FINDING_MOD_028};
+    struct p101_tool_diagnostic    diagnostic;
+    int                            status;
 
     P101_TRACE_SCOPE(env);
     if(rule_kind < P101_ERROR_CONTRACT_RULE_ENV_REQUIRED || rule_kind >= P101_ERROR_CONTRACT_RULE_COUNT)

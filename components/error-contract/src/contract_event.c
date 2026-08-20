@@ -74,6 +74,9 @@ bool p101_contract_event_kind_from_note(enum p101_c_note_kind note, enum contrac
         case P101_C_NOTE_ERROR_UNCHECKED_CHAIN:
             *kind = CONTRACT_EVENT_ERROR_UNCHECKED_CHAIN;
             break;
+        case P101_C_NOTE_ERROR_OUTPUT_UNCHECKED:
+            *kind = CONTRACT_EVENT_ERROR_OUTPUT_UNCHECKED;
+            break;
         case P101_C_NOTE_FUNCTION_RETURN:
             *kind = CONTRACT_EVENT_FUNCTION_RETURN;
             break;
@@ -82,6 +85,48 @@ bool p101_contract_event_kind_from_note(enum p101_c_note_kind note, enum contrac
             break;
         case P101_C_NOTE_CALL_NOT_ISOLATED:
             *kind = CONTRACT_EVENT_CALL_NOT_ISOLATED;
+            break;
+        case P101_C_NOTE_MUST_CHECK_RESULT_DISCARDED:
+            *kind = CONTRACT_EVENT_MUST_CHECK_RESULT_DISCARDED;
+            break;
+        case P101_C_NOTE_ERROR_CLEANUP_SHADOW:
+            *kind = CONTRACT_EVENT_ERROR_CLEANUP_SHADOW;
+            break;
+        case P101_C_NOTE_PARTIAL_RESULT_DISCARDED:
+            *kind = CONTRACT_EVENT_PARTIAL_RESULT_DISCARDED;
+            break;
+        case P101_C_NOTE_UNCERTAIN_PROGRESS_RETRIED:
+            *kind = CONTRACT_EVENT_UNCERTAIN_PROGRESS_RETRIED;
+            break;
+        case P101_C_NOTE_CONDITION_WAIT_OUTSIDE_LOOP:
+            *kind = CONTRACT_EVENT_CONDITION_WAIT_OUTSIDE_LOOP;
+            break;
+        case P101_C_NOTE_POST_FORK_UNSAFE_CALL:
+            *kind = CONTRACT_EVENT_POST_FORK_UNSAFE_CALL;
+            break;
+        case P101_C_NOTE_ZERO_SIZE_ALLOCATION:
+            *kind = CONTRACT_EVENT_ZERO_SIZE_ALLOCATION;
+            break;
+        case P101_C_NOTE_OVERLAPPING_RESTRICTED_COPY:
+            *kind = CONTRACT_EVENT_OVERLAPPING_RESTRICTED_COPY;
+            break;
+        case P101_C_NOTE_THREAD_AUTOMATIC_STORAGE_ESCAPE:
+            *kind = CONTRACT_EVENT_THREAD_AUTOMATIC_STORAGE_ESCAPE;
+            break;
+        case P101_C_NOTE_ENV_BORROWED_POINTER_INVALIDATED:
+            *kind = CONTRACT_EVENT_ENV_BORROWED_POINTER_INVALIDATED;
+            break;
+        case P101_C_NOTE_PATH_TOCTOU:
+            *kind = CONTRACT_EVENT_PATH_TOCTOU;
+            break;
+        case P101_C_NOTE_SIGNAL_HANDLER_REGISTERED:
+            *kind = CONTRACT_EVENT_SIGNAL_HANDLER_REGISTERED;
+            break;
+        case P101_C_NOTE_SIGNAL_SHARED_OBJECT_ACCESS:
+            *kind = CONTRACT_EVENT_SIGNAL_SHARED_OBJECT_ACCESS;
+            break;
+        case P101_C_NOTE_RECURSIVE_CALL:
+            *kind = CONTRACT_EVENT_RECURSIVE_CALL;
             break;
         case P101_C_NOTE_SIGNATURE_ENV_ORDER:
         case P101_C_NOTE_FIELD_REACH:

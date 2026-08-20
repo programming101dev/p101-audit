@@ -34,14 +34,17 @@ int main(int argc, char **argv)
             goto done;
         }
     }
-    if(argc == 4)
+    if(argc == 5)
     {
         comparison = p101_strcmp(env, argv[1], "snapshot");
         if(comparison == 0)
         {
-            status = p101_api_snapshot(env, err, argv[2], argv[3]);
+            status = p101_api_snapshot(env, err, argv[2], argv[3], argv[4]);
             goto done;
         }
+    }
+    if(argc == 4)
+    {
         comparison = p101_strcmp(env, argv[1], "compare");
         if(comparison == 0)
         {
@@ -66,5 +69,5 @@ done:
 
 static void usage(const struct p101_env *env, struct p101_error *err, const char *program)
 {
-    p101_fprintf(env, err, stderr, "Usage: %s snapshot WORKSPACE OUTPUT\n       %s compare OLD NEW\n", program, program);
+    p101_fprintf(env, err, stderr, "Usage: %s snapshot WORKSPACE FACTS OUTPUT\n       %s compare OLD NEW\n", program, program);
 }
